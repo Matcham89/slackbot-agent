@@ -1,14 +1,21 @@
+# Kagent Slack Bot - Python Dependencies
+# Pinned versions for security and reproducibility (2025 best practices)
+# Update regularly and check for vulnerabilities with: pip-audit or safety
+
 # Slack integration
-slack-bolt>=1.18.0
-slack-sdk>=3.23.0
+slack-bolt==1.21.2
+slack-sdk==3.33.4
 
 # HTTP and SSE handling
-requests>=2.31.0
-sseclient-py>=1.8.0
+requests==2.32.3
+sseclient-py==1.8.0
 
 # Environment variables
-python-dotenv>=1.0.0
+python-dotenv==1.0.1
 
-# Optional but recommended for production
-certifi>=2023.7.22  # SSL certificate handling
-urllib3>=2.0.7      # HTTP client (used by requests)
+# Security: SSL certificate handling and HTTP client
+certifi==2024.12.14  # SSL certificate handling (keep updated)
+urllib3==2.2.3       # HTTP client (used by requests)
+
+# Note: Run 'pip list --outdated' periodically to check for updates
+# Security scanning: pip install pip-audit && pip-audit

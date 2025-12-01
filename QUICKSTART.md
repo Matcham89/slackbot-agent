@@ -65,13 +65,13 @@ python slack_bot.py
 kubectl create secret generic slack-credentials \
   --from-literal=bot-token='xoxb-your-token' \
   --from-literal=app-token='xapp-your-token' \
-  --namespace=apps
+  --namespace=kagent
 
 # Deploy
 kubectl apply -f k8s-deployment.yaml
 
 # Check logs
-kubectl logs -n apps -l app=kagent-slack-bot -f
+kubectl logs -n kagent -l app=kagent-slack-bot -f
 ```
 
 ✅ **Done!** See [KUBERNETES.md](KUBERNETES.md) for detailed guide.
@@ -98,7 +98,7 @@ Bot should respond with context! It remembers "the first one" refers to the firs
 ### Can't connect?
 ```bash
 # Test endpoint
-curl http://localhost:8083/api/a2a/apps/k8s-agent/.well-known/agent.json
+curl http://localhost:8083/api/a2a/kagent/k8s-agent/.well-known/agent.json
 ```
 
 ## What's Next?

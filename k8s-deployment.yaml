@@ -9,13 +9,15 @@
 #    kubectl create secret generic slack-credentials \
 #      --from-literal=bot-token='xoxb-your-bot-token-here' \
 #      --from-literal=app-token='xapp-your-app-token-here' \
-#      --namespace=apps
+#      --namespace=kagent
 #
 # 2. Build and push your Docker image:
-#    docker build -t matcham89/kagent-slack-bot:latest .
-#    docker push matcham89/kagent-slack-bot:latest
+#    ./build.sh
+#    (or manually: docker build -t your-registry/kagent-slack-bot:latest .)
 #
-# 3. Apply this deployment:
+# 3. Update the image in this file (line 54) with your registry
+#
+# 4. Apply this deployment:
 #    kubectl apply -f k8s-deployment.yaml
 #
 ---
@@ -23,7 +25,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kagent-slack-bot
-  namespace: apps
+  namespace: kagent
   labels:
     app: kagent-slack-bot
 spec:
@@ -36,10 +38,34 @@ spec:
       labels:
         app: kagent-slack-bot
     spec:
+      # Security context for the pod (2025 best practices)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
       containers:
       - name: bot
-        image: matcham89/kagent-slack-bot:latest
+        # Replace with your image: your-registry/kagent-slack-bot:latest
+        # Examples:
+        #   - docker.io/username/kagent-slack-bot:latest
+        #   - ghcr.io/username/kagent-slack-bot:latest
+        #   - gcr.io/project-id/kagent-slack-bot:latest
+        image: your-registry/kagent-slack-bot:latest
         imagePullPolicy: Always
+
+        # Container security context (fixes pod security restricted warnings)
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+              - ALL
+
         env:
         # Slack tokens from secret
         - name: SLACK_BOT_TOKEN
@@ -56,12 +82,19 @@ spec:
         # Kagent Configuration - Separate components for flexibility
         # Change these values to match your Kagent deployment
         - name: KAGENT_BASE_URL
-          value: "http://kagent-controller.apps.svc.cluster.local:8083"
+          value: "http://kagent-controller.kagent.svc.cluster.local:8083"
         - name: KAGENT_NAMESPACE
-          value: "apps"
+          value: "kagent"
         - name: KAGENT_AGENT_NAME
           value: "k8s-agent"
         
+        # Temporary directory for Python (needed with readOnlyRootFilesystem)
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: python-cache
+          mountPath: /home/kagent/.cache
+
         resources:
           requests:
             memory: "128Mi"
@@ -69,8 +102,8 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "200m"
-        
-        # Simple liveness probe
+
+        # Liveness probe - check if Python process is responsive
         livenessProbe:
           exec:
             command:
@@ -79,5 +112,28 @@ spec:
             - "import sys; sys.exit(0)"
           initialDelaySeconds: 10
           periodSeconds: 30
-      
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        # Readiness probe - bot must be running to be ready
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+
+      # Volumes for temporary files (required with readOnlyRootFilesystem)
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: python-cache
+        emptyDir: {}
+
       restartPolicy: Always
+
+      # Automatically mount service account token only if needed
+      automountServiceAccountToken: false

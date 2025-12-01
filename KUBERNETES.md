@@ -19,17 +19,17 @@ Create a Kubernetes secret with your Slack tokens:
 kubectl create secret generic slack-credentials \
   --from-literal=bot-token='xoxb-your-bot-token-here' \
   --from-literal=app-token='xapp-your-app-token-here' \
-  --namespace=apps
+  --namespace=kagent
 ```
 
 Replace:
 - `xoxb-your-bot-token-here` - Bot User OAuth Token from Slack
 - `xapp-your-app-token-here` - App-Level Token from Slack
-- `apps` - Namespace where Kagent is deployed
+- `kagent` - Namespace where Kagent is deployed (default from quickstart)
 
 **Verify secret was created:**
 ```bash
-kubectl get secret slack-credentials -n apps
+kubectl get secret slack-credentials -n kagent
 ```
 
 ### Step 2: Deploy Bot
@@ -47,17 +47,17 @@ image: your-registry/kagent-slack-bot:latest
 
 ```bash
 # Check pod is running
-kubectl get pods -n apps -l app=kagent-slack-bot
+kubectl get pods -n kagent -l app=kagent-slack-bot
 
 # View logs
-kubectl logs -n apps -l app=kagent-slack-bot -f
+kubectl logs -n kagent -l app=kagent-slack-bot -f
 ```
 
 Expected output:
 ```
 ✓ Slack app initialized
 🚀 Starting Kagent Slack Bot...
-   Kagent URL: http://kagent-controller.apps.svc.cluster.local:8083/api/a2a/apps/k8s-agent/
+   Kagent URL: http://kagent-controller.kagent.svc.cluster.local:8083/api/a2a/kagent/k8s-agent/
 ⚡️ Kagent Slack Bot is running!
 ⚡️ Bolt app is running!
 ```
@@ -154,19 +154,19 @@ If you need to rotate Slack tokens:
 
 ```bash
 # Delete old secret
-kubectl delete secret slack-credentials -n apps
+kubectl delete secret slack-credentials -n kagent
 
 # Create new secret with updated tokens
 kubectl create secret generic slack-credentials \
   --from-literal=bot-token='xoxb-new-token' \
   --from-literal=app-token='xapp-new-token' \
-  --namespace=apps
+  --namespace=kagent
 
 # Restart deployment to pick up new secret
-kubectl rollout restart deployment/kagent-slack-bot -n apps
+kubectl rollout restart deployment/kagent-slack-bot -n kagent
 
 # Watch rollout
-kubectl rollout status deployment/kagent-slack-bot -n apps
+kubectl rollout status deployment/kagent-slack-bot -n kagent
 ```
 
 ## Monitoring
@@ -255,7 +255,7 @@ kubectl get svc kagent-controller -n apps
 **Test from within cluster:**
 ```bash
 kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
-  curl http://kagent-controller.apps.svc.cluster.local:8083/api/a2a/apps/k8s-agent/.well-known/agent.json
+  curl http://kagent-controller.kagent.svc.cluster.local:8083/api/a2a/kagent/k8s-agent/.well-known/agent.json
 ```
 
 Should return agent info (not 404 or connection refused).
@@ -282,10 +282,10 @@ Deploy bot in same namespace as Kagent for network policies:
 
 ```bash
 # Create namespace if needed
-kubectl create namespace apps
+kubectl create namespace kagent
 
-# Deploy everything in apps namespace
-kubectl apply -f k8s-deployment.yaml -n apps
+# Deploy everything in kagent namespace
+kubectl apply -f k8s-deployment.yaml -n kagent
 ```
 
 ### Limit Permissions
@@ -318,7 +318,7 @@ apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret
 metadata:
   name: slack-credentials
-  namespace: apps
+  namespace: kagent
 spec:
   refreshInterval: 1h
   secretStoreRef:

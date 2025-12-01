@@ -60,11 +60,11 @@ SLACK_BOT_TOKEN=xoxb-your-bot-token-here
 SLACK_APP_TOKEN=xapp-your-app-token-here
 
 # Local port-forward endpoint
-KAGENT_A2A_URL=http://localhost:8083/api/a2a/apps/k8s-agent
+KAGENT_A2A_URL=http://localhost:8083/api/a2a/kagent/k8s-agent
 ```
 
-**Important:** Update `apps` and `k8s-agent` to match your setup:
-- `apps` = namespace where Kagent is deployed
+**Important:** Update `kagent` and `k8s-agent` to match your setup:
+- `kagent` = namespace where Kagent is deployed (default from quickstart)
 - `k8s-agent` = name of your agent
 
 ### 4. Run the Bot
@@ -77,7 +77,7 @@ You should see:
 ```
 2025-10-30 14:00:00 - INFO - ✓ Slack app initialized
 2025-10-30 14:00:00 - INFO - 🚀 Starting Kagent Slack Bot...
-2025-10-30 14:00:00 - INFO -    Kagent URL: http://localhost:8083/api/a2a/apps/k8s-agent/
+2025-10-30 14:00:00 - INFO -    Kagent URL: http://localhost:8083/api/a2a/kagent/k8s-agent/
 2025-10-30 14:00:00 - INFO -    Bot token: xoxb-8039506410246-9...
 2025-10-30 14:00:00 - INFO -    App token: xapp-1-A09Q4NC7F7B-9...
 2025-10-30 14:00:00 - INFO - ⚡️ Kagent Slack Bot is running!
@@ -141,14 +141,14 @@ logging.basicConfig(
 
 **Test A2A endpoint directly:**
 ```bash
-curl http://localhost:8083/api/a2a/apps/k8s-agent/.well-known/agent.json
+curl http://localhost:8083/api/a2a/kagent/k8s-agent/.well-known/agent.json
 ```
 
 Should return agent info (not 404).
 
 **Test with specific message (returns SSE stream):**
 ```bash
-curl -X POST http://localhost:8083/api/a2a/apps/k8s-agent/ \
+curl -X POST http://localhost:8083/api/a2a/kagent/k8s-agent/ \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -d '{

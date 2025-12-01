@@ -1,0 +1,65 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files (contain secrets)
+.env
+.env.local
+.env.*.local
+
+# Documentation
+*.md
+LICENSE
+docs/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Kubernetes
+k8s-deployment.yaml
+*.yaml
+*.yml
+
+# Build scripts
+build.sh
+Makefile
+
+# Tests
+tests/
+test_*.py
+*_test.py
+pytest.ini
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Misc
+*.log
+.cache/
+tmp/

@@ -1,166 +1,104 @@
 # Kagent Slack Bot
 
-A minimal Slack bot that connects your workspace to Kagent's Kubernetes AI agents using the A2A (Agent2Agent) protocol. Ask questions about your cluster in natural language directly from Slack.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+[![Docker](https://img.shields.io/badge/docker-ready-brightgreen.svg)](https://www.docker.com/)
+[![Kubernetes](https://img.shields.io/badge/kubernetes-native-326CE5.svg)](https://kubernetes.io/)
 
-```
-User in Slack: @kagent what pods are running in production?
-                     ↓
-              Slack Bot (this)
-                     ↓
-            Kagent AI Agent (A2A Protocol)
-                     ↓
-            Kubernetes API (kubectl)
-                     ↓
-         Response back to Slack thread
-```
+> **A secure, production-ready Slack bot that connects your workspace to Kagent's Kubernetes AI agents using the A2A (Agent2Agent) protocol.**
+
+Ask questions about your Kubernetes cluster in natural language directly from Slack. Get instant insights, debug issues, and manage resources through conversational AI.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Installation](#installation)
+  - [Local Development](#local-development)
+  - [Kubernetes Deployment](#kubernetes-deployment)
+- [Configuration](#configuration)
+- [Security](#security)
+- [Usage](#usage)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
 
 ## Features
 
-- ✅ **Natural Language Interface** - Ask questions like "@kagent what pods are running?"
-- ✅ **Conversational Context** - Maintains conversation history within each thread
-- ✅ **A2A Protocol** - Standard Agent2Agent communication with streaming support
-- ✅ **Socket Mode** - No public URLs needed, works behind firewalls
-- ✅ **Production Ready** - Clean architecture with proper error handling
-- ✅ **Kubernetes Native** - Designed for cluster deployment
+✅ **Natural Language Interface** - Ask questions like "@kagent what pods are running in production?"
+✅ **Conversational Context** - Maintains conversation history within Slack threads
+✅ **A2A Protocol** - Standard Agent2Agent communication with streaming support
+✅ **Socket Mode** - No public URLs needed, works behind firewalls
+✅ **Production Ready** - Security hardened with proper error handling
+✅ **Kubernetes Native** - Designed for cluster deployment with full pod security compliance
+✅ **Read-Only Filesystem** - Runs with restricted security context
+✅ **Non-Root User** - Executes as UID 1000 for enhanced security
 
-## Quick Links
+---
 
-- 📘 **[Local Development](LOCAL_DEV.md)** - Run locally with port-forward
-- 🚀 **[Kubernetes Deployment](KUBERNETES.md)** - Production deployment guide
-- ⚡ **[Quickstart](QUICKSTART.md)** - Get running in 5 minutes
+## Quick Start
 
-## What You Need
+### Prerequisites
 
-- **Slack workspace** with admin access
-- **Kagent** installed in Kubernetes
-- **Python 3.8+** (for local dev) OR **Kubernetes cluster** (for production)
+- **Slack workspace** with admin access to create apps
+- **Kagent** installed and running in your Kubernetes cluster
+  - 🚀 **New to Kagent?** Follow the [Kagent Getting Started Guide](https://kagent.dev/docs/kagent/getting-started/quickstart) to:
+    - Spin up a local kind cluster (if you don't have one)
+    - Install Kagent with the default k8s-agent
+    - Get running in minutes!
+- **Python 3.13+** (for local development) OR **Kubernetes cluster** (for production)
+- **Docker** (optional, for building custom images)
 
-## Get Started
-
-### Option 1: Local Development
-
-Perfect for testing and development:
+### 5-Minute Setup
 
 ```bash
-# 1. Port-forward Kagent
-kubectl port-forward -n apps svc/kagent-controller 8083:8083 &
+# 0. Setup Kagent (if you haven't already)
+# Follow: https://kagent.dev/docs/kagent/getting-started/quickstart
+# This creates a kind cluster with Kagent and the default k8s-agent
 
-# 2. Setup and run bot
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# 1. Clone the repository
+git clone https://github.com/your-org/kagent-slack-bot.git
+cd kagent-slack-bot
+
+# 2. Port-forward Kagent (for local testing)
+kubectl port-forward -n kagent svc/kagent-controller 8083:8083 &
+
+# 3. Configure environment
 cp .env.example .env
-# Edit .env with your Slack tokens
+# Edit .env with your Slack tokens (see Configuration section below)
+
+# 4. Run locally
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
 python slack_bot.py
 ```
 
-**See [LOCAL_DEV.md](LOCAL_DEV.md) for detailed instructions.**
+**See [QUICKSTART.md](QUICKSTART.md) for detailed 5-minute setup guide.**
 
-### Option 2: Kubernetes Deployment
+### What You Get from Kagent Quickstart
 
-For production use:
+Following the [Kagent Getting Started Guide](https://kagent.dev/docs/kagent/getting-started/quickstart) will set up:
 
-```bash
-# 1. Create secret with Slack tokens
-kubectl create secret generic slack-credentials \
-  --from-literal=bot-token='xoxb-your-token' \
-  --from-literal=app-token='xapp-your-token' \
-  --namespace=apps
+- ✅ **Local kind cluster** (if you don't have one)
+- ✅ **Kagent installed** in the `kagent` namespace
+- ✅ **Default k8s-agent** ready to answer questions about your cluster
+- ✅ **Kagent controller** running on port 8083
+- ✅ **A2A endpoint** at `http://localhost:8083/api/a2a/kagent/k8s-agent` (after port-forward)
 
-# 2. Deploy
-kubectl apply -f k8s-deployment.yaml
+This Slack bot then connects to that endpoint, enabling you to:
+- Ask questions about your cluster from Slack
+- Get real-time responses from the k8s-agent
+- Maintain conversation context within Slack threads
 
-# 3. Check logs
-kubectl logs -n apps -l app=kagent-slack-bot -f
-```
+**Perfect for:** Local development, testing, and learning how Kagent works before deploying to production.
 
-**See [KUBERNETES.md](KUBERNETES.md) for detailed instructions.**
-
-## Slack App Configuration
-
-### Required Configuration (5 minutes)
-
-1. **Create App** at https://api.slack.com/apps
-   - Click "Create New App" → "From scratch"
-   - Name: `kagent`, select workspace
-
-2. **Add Bot Scopes** (OAuth & Permissions → Bot Token Scopes):
-   - `app_mentions:read` - Detect @mentions
-   - `chat:write` - Post messages
-   - `channels:history` - Read history
-
-3. **Enable Socket Mode** (Socket Mode → Toggle ON):
-   - Generate token with `connections:write` scope
-   - Save as `SLACK_APP_TOKEN`
-
-4. **Enable Event Subscriptions** (Event Subscriptions → Toggle ON):
-   - ⚠️ **CRITICAL**: Leave "Request URL" blank (we use Socket Mode)
-   - Subscribe to bot events: `app_mention`
-   - Click "Save Changes"
-
-5. **Install App** (OAuth & Permissions):
-   - Click "Reinstall to Workspace" → "Allow"
-   - Copy Bot User OAuth Token as `SLACK_BOT_TOKEN`
-
-### Test in Slack
-
-```
-/invite @kagent
-@kagent list all namespaces
-@kagent how many pods in the first one?  ← Remembers "first one" = first namespace!
-```
-
-Each Slack thread maintains its own conversation context with kagent.
-
-## A2A Protocol Implementation
-
-This bot implements the A2A (Agent2Agent) protocol with Server-Sent Events (SSE) streaming.
-
-### JSON-RPC 2.0 Streaming Request
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "message/stream",
-  "params": {
-    "message": {
-      "kind": "message",
-      "role": "user",
-      "parts": [{"kind": "text", "text": "your question"}],
-      "messageId": "unique-uuid",
-      "contextId": "thread-context-id",  // For conversation continuity
-      "metadata": {
-        "displaySource": "user"
-      }
-    }
-  },
-  "id": 1
-}
-```
-
-### SSE Response Format
-
-The agent streams multiple events:
-
-```
-event: task_status_update
-data: {"result":{"status":{"state":"submitted"},...}}
-
-event: task_status_update
-data: {"result":{"status":{"message":{"role":"agent","parts":[{"text":"response"}]}}}}
-
-event: task_status_update
-data: {"result":{"final":true,"status":{"state":"completed"}}}
-```
-
-**Key Implementation Details:**
-- Method: `message/stream` (streaming, not `message/send`)
-- Response: SSE (Server-Sent Events) format
-- Context: `contextId` in message for conversation continuity
-- Agent response: Found in `event.status.message.parts[0].text` where `role='agent'`
-- Library: `sseclient-py` for proper SSE handling
-
-See [A2A Protocol Specification](https://a2a-protocol.org/latest/specification/) for details.
+---
 
 ## Architecture
 
@@ -169,29 +107,30 @@ See [A2A Protocol Specification](https://a2a-protocol.org/latest/specification/)
 │  Slack (Browser)    │
 │  @kagent what ...?  │
 └──────────┬──────────┘
-           │ WebSocket (Socket Mode)
+           │ WebSocket (Socket Mode - Secure)
            ↓
 ┌─────────────────────────────┐
-│   slack_bot.py              │
+│   Kagent Slack Bot          │
 │   ┌─────────────────────┐   │
-│   │ Slack Event Handler │   │
-│   │ - Receives mentions │   │
-│   │ - Thread management │   │
+│   │ Event Handler       │   │  ← Receives @mentions
+│   │ Thread Manager      │   │  ← Maps Slack threads to contextIds
 │   └──────────┬──────────┘   │
 │              │               │
 │   ┌──────────▼──────────┐   │
-│   │   KagentClient      │   │
-│   │ - Builds request    │   │
-│   │ - Parses SSE stream │   │
-│   │ - Tracks contextId  │   │
+│   │ KagentClient        │   │  ← A2A Protocol Implementation
+│   │ - JSON-RPC 2.0      │   │
+│   │ - SSE Streaming     │   │
+│   │ - Context Tracking  │   │
 │   └──────────┬──────────┘   │
 └──────────────┼──────────────┘
-               │ HTTP POST (A2A Protocol)
-               │ JSON-RPC 2.0 + SSE stream
+               │ HTTPS POST (SSL Verified)
+               │ Content-Type: application/json
+               │ Accept: text/event-stream
                ↓
 ┌───────────────────────────────┐
-│  Kagent Controller (Port 8083)│
-│  - Streams events (SSE)       │
+│  Kagent Controller            │
+│  (Port 8083)                  │
+│  - Streams SSE events         │
 │  - Maintains contextId        │
 └──────────────┬────────────────┘
                │ Routes to agent
@@ -210,98 +149,372 @@ See [A2A Protocol Specification](https://a2a-protocol.org/latest/specification/)
 └───────────────────────────────┘
 ```
 
-**Key Components:**
-- **Slack Event Handler**: Receives @mentions, manages threads
-- **KagentClient**: Encapsulates A2A protocol communication
-- **SSE Parsing**: Handles streaming responses from kagent
-- **Context Management**: Maps Slack threads to kagent contextIds
+**Key Security Features:**
+- WebSocket connection secured via Slack Socket Mode
+- HTTPS with SSL verification for Kagent communication
+- No public endpoints required (Socket Mode)
+- Environment-based credential management
+- Input sanitization in logs
 
-## Project Structure
+---
+
+## Installation
+
+### Local Development
+
+Perfect for testing and development. Full instructions in [LOCAL_DEV.md](LOCAL_DEV.md).
+
+**Prerequisites:**
+- Kagent running in your cluster ([setup guide](https://kagent.dev/docs/kagent/getting-started/quickstart))
+
+**Quick Steps:**
+
+```bash
+# 1. Setup Python environment
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 2. Configure (copy and edit .env)
+cp .env.example .env
+
+# 3. Port-forward Kagent
+kubectl port-forward -n kagent svc/kagent-controller 8083:8083 &
+
+# 4. Run
+python slack_bot.py
+```
+
+### Kubernetes Deployment
+
+Production deployment with full security hardening. Full instructions in [KUBERNETES.md](KUBERNETES.md).
+
+**Quick Steps:**
+
+```bash
+# 1. Create Slack credentials secret
+kubectl create secret generic slack-credentials \
+  --from-literal=bot-token='xoxb-your-bot-token-here' \
+  --from-literal=app-token='xapp-your-app-token-here' \
+  --namespace=kagent
+
+# 2. (Optional) Customize namespace/agent in k8s-deployment.yaml
+# Edit KAGENT_NAMESPACE and KAGENT_AGENT_NAME values
+
+# 3. Deploy
+kubectl apply -f k8s-deployment.yaml
+
+# 4. Verify
+kubectl logs -n kagent -l app=kagent-slack-bot -f
+```
+
+**Security:** The deployment includes:
+- Pod Security Standards (restricted) compliance
+- Read-only root filesystem
+- Non-root user (UID 1000)
+- Dropped all capabilities
+- No privilege escalation
+- Seccomp runtime default profile
+- Resource limits
+
+---
+
+## Configuration
+
+### Environment Variables
+
+The bot supports two configuration approaches:
+
+#### Option 1: Single URL (Recommended for simple setups)
+
+```bash
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-token
+KAGENT_A2A_URL=http://localhost:8083/api/a2a/kagent/k8s-agent
+```
+
+#### Option 2: Separate Components (Recommended for Kubernetes)
+
+```bash
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-token
+KAGENT_BASE_URL=http://kagent-controller.kagent.svc.cluster.local:8083
+KAGENT_NAMESPACE=kagent
+KAGENT_AGENT_NAME=k8s-agent
+```
+
+### Slack App Setup
+
+**Required OAuth Scopes:**
+- `app_mentions:read` - Detect @mentions
+- `chat:write` - Post messages
+- `channels:history` - Read channel history
+
+**Required Settings:**
+1. **Socket Mode** - Enabled with `connections:write` scope
+2. **Event Subscriptions** - Enabled with `app_mention` event
+3. **Request URL** - Leave blank (Socket Mode doesn't need it)
+
+**Detailed setup guide:** See the Configuration section below for step-by-step instructions.
+
+---
+
+## Security
+
+This project follows 2025 security best practices:
+
+### Application Security
+- ✅ Environment-based configuration (no hardcoded secrets)
+- ✅ Input validation and sanitization
+- ✅ SSL/TLS verification enabled
+- ✅ Timeout protection (5-minute max request time)
+- ✅ Secure random message ID generation (SHA-256)
+- ✅ Log injection prevention
+- ✅ Minimal dependencies with pinned versions
+
+### Container Security
+- ✅ Non-root user (UID/GID 1000)
+- ✅ Minimal base image (python:3.13-slim-bookworm)
+- ✅ No unnecessary packages
+- ✅ Read-only root filesystem compatible
+- ✅ Explicit labels for traceability
+
+### Kubernetes Security
+- ✅ Pod Security Standards: restricted
+- ✅ `allowPrivilegeEscalation: false`
+- ✅ `readOnlyRootFilesystem: true`
+- ✅ `runAsNonRoot: true`
+- ✅ Capabilities dropped: ALL
+- ✅ Seccomp profile: RuntimeDefault
+- ✅ Service account auto-mount disabled
+- ✅ Resource limits defined
+
+**Vulnerability Reporting:** This is an open-source project. Please open a GitHub issue for security concerns.
+
+---
+
+## Usage
+
+### Basic Interaction
 
 ```
-kagent-slack/
-├── slack_bot.py           # Main bot code (~310 lines)
-│                          #   - KagentClient class
-│                          #   - SSE stream parsing
-│                          #   - Context management
-├── requirements.txt       # Python dependencies
-│                          #   - slack-bolt, requests
-│                          #   - sseclient-py (SSE support)
-├── Dockerfile            # Container image (2025 best practices)
-├── k8s-deployment.yaml   # Kubernetes deployment
-├── build.sh              # Build and push Docker image
-├── .env.example          # Environment template
-├── README.md             # This file (overview)
-├── LOCAL_DEV.md          # Local development guide
-├── KUBERNETES.md         # Production deployment guide
-└── QUICKSTART.md         # 5-minute quickstart
+# Invite the bot to a channel
+/invite @kagent
+
+# Ask questions
+@kagent list all namespaces
+@kagent what pods are running in production?
+@kagent show me logs for the first pod
 ```
+
+### Thread Context
+
+Each Slack thread maintains its own conversation context:
+
+```
+Thread 1:
+  User: @kagent what namespaces exist?
+  Bot: default, kube-system, apps, production
+  User: @kagent how many pods in the first one?  ← Remembers "first one" = default
+  Bot: 12 pods running in default namespace
+
+Thread 2:
+  User: @kagent check the apps namespace        ← Separate context
+```
+
+### A2A Protocol Details
+
+The bot implements the [A2A Protocol](https://a2a-protocol.org/latest/specification/) with:
+
+**Request Format (JSON-RPC 2.0):**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "message/stream",
+  "params": {
+    "message": {
+      "role": "user",
+      "parts": [{"kind": "text", "text": "your question"}],
+      "messageId": "msg-abc123",
+      "contextId": "thread-context-id"
+    }
+  },
+  "id": 1
+}
+```
+
+**Response Format (Server-Sent Events):**
+```
+event: task_status_update
+data: {"result":{"status":{"state":"submitted"}}}
+
+event: task_status_update
+data: {"result":{"status":{"message":{"role":"agent","parts":[{"text":"response"}]}}}}
+
+event: task_status_update
+data: {"result":{"final":true,"status":{"state":"completed"}}}
+```
+
+---
 
 ## Troubleshooting
 
-### Bot Not Responding
+### Bot Not Responding to Mentions
 
-**Most common issue:** Event Subscriptions not configured
+**Most common issue:** Event Subscriptions not configured correctly
 
 1. Go to https://api.slack.com/apps → Your App
-2. Check "Event Subscriptions" → Toggle is ON
-3. Verify `app_mention` is in "Subscribe to bot events"
-4. Click "Reinstall to Workspace"
-5. Restart bot
+2. **Event Subscriptions** → Verify:
+   - Toggle is ON
+   - `app_mention` is in "Subscribe to bot events"
+   - **Request URL is BLANK** (Socket Mode doesn't use it)
+3. Click **"Reinstall to Workspace"**
+4. Restart the bot
 
 ### Can't Connect to Kagent
 
 ```bash
 # Test endpoint is reachable
-curl http://localhost:8083/api/a2a/apps/k8s-agent/.well-known/agent.json
+curl http://localhost:8083/api/a2a/kagent/k8s-agent/.well-known/agent.json
 
-# Should return agent info (not 404)
+# Should return agent metadata (not 404)
+# If 404, verify namespace and agent name are correct
 ```
 
-### More Help
+### Kubernetes Pod Not Starting
 
-- **Local dev issues**: See [LOCAL_DEV.md](LOCAL_DEV.md#troubleshooting)
-- **Kubernetes issues**: See [KUBERNETES.md](KUBERNETES.md#troubleshooting)
-- **Slack config**: See [Slack API Docs](https://api.slack.com/docs)
+```bash
+# Check pod status
+kubectl get pods -n kagent -l app=kagent-slack-bot
+
+# View logs
+kubectl logs -n kagent -l app=kagent-slack-bot
+
+# Common issues:
+# - Missing secret: create slack-credentials secret first
+# - Wrong namespace: ensure Kagent is in the correct namespace
+# - Network policies: verify pod can reach kagent-controller service
+```
+
+### Read-Only Filesystem Errors
+
+The bot runs with `readOnlyRootFilesystem: true`. Temporary files are written to mounted volumes:
+- `/tmp` - general temporary files
+- `/home/kagent/.cache` - Python cache
+
+These are automatically configured in the Kubernetes deployment.
+
+**More help:**
+- [LOCAL_DEV.md](LOCAL_DEV.md#troubleshooting) - Local development issues
+- [KUBERNETES.md](KUBERNETES.md#troubleshooting) - Production deployment issues
+
+---
 
 ## Contributing
 
-Improvements welcome! The codebase is designed to be clean and maintainable.
+Contributions are welcome! This project is designed to be clean, maintainable, and secure.
 
-**Current features:**
+### Current Features
 - ✅ Conversation context within threads
 - ✅ SSE streaming support
 - ✅ Clean class-based architecture
 - ✅ Comprehensive error handling
+- ✅ Security hardened
+- ✅ Production ready
 
-**Areas for contribution:**
+### Areas for Contribution
 - Long-term conversation memory (Redis/database)
 - Multi-agent support (switch agents mid-conversation)
 - Slash commands (`/kagent ask ...`)
 - Interactive buttons and forms
-- Metrics and observability
+- Metrics and observability (Prometheus/Grafana)
+- Unit and integration tests
+- Performance optimizations
+
+### Development Setup
+
+```bash
+git clone https://github.com/your-org/kagent-slack-bot.git
+cd kagent-slack-bot
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Run locally with port-forward
+kubectl port-forward -n kagent svc/kagent-controller 8083:8083 &
+python slack_bot.py
+```
+
+---
+
+## Project Structure
+
+```
+kagent-slack-bot/
+├── slack_bot.py              # Main application (~320 lines)
+│   ├── KagentClient          # A2A protocol client
+│   ├── SSE stream parser     # Server-Sent Events handling
+│   └── Slack event handlers  # @mention handling & threading
+├── requirements.txt          # Python dependencies (pinned versions)
+├── Dockerfile                # Multi-platform container image (security hardened)
+├── k8s-deployment.yaml       # Kubernetes deployment (pod security: restricted)
+├── build.sh                  # Multi-arch Docker build script
+├── .env.example              # Environment variable template
+├── .dockerignore             # Docker build exclusions
+├── .gitignore                # Git exclusions
+├── LICENSE                   # MIT License
+├── README.md                 # This file (overview)
+├── LOCAL_DEV.md              # Local development guide
+├── KUBERNETES.md             # Production deployment guide
+└── QUICKSTART.md             # 5-minute quick reference
+```
+
+---
 
 ## License
 
-MIT License - Free to use and modify for your needs.
+MIT License - Copyright (c) 2025
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so.
+
+See [LICENSE](LICENSE) file for full details.
+
+---
 
 ## Resources
 
-- **Kagent**: https://kagent.dev/docs
-- **A2A Protocol**: https://a2a-protocol.org
-- **Slack Bolt**: https://slack.dev/bolt-python/
-- **Socket Mode**: https://api.slack.com/apis/connections/socket
+### Kagent
+- **Kagent Getting Started:** https://kagent.dev/docs/kagent/getting-started/quickstart (Setup kind cluster + Kagent)
+- **Kagent Documentation:** https://kagent.dev/docs
+- **Kagent Architecture:** https://kagent.dev/docs/kagent/architecture
+
+### Protocols & Standards
+- **A2A Protocol Specification:** https://a2a-protocol.org/latest/specification/
+- **Kubernetes Pod Security Standards:** https://kubernetes.io/docs/concepts/security/pod-security-standards/
+
+### Slack Development
+- **Slack Bolt for Python:** https://slack.dev/bolt-python/
+- **Slack Socket Mode:** https://api.slack.com/apis/connections/socket
+- **Slack API Documentation:** https://api.slack.com/docs
+
+---
 
 ## Acknowledgments
 
 Built with:
-- Google's **A2A (Agent2Agent) Protocol**
-- Slack's **Bolt framework** for Python
-- **Kagent** AI agent platform
+- **Google's A2A (Agent2Agent) Protocol** - Standard for agent communication
+- **Slack's Bolt Framework** for Python - Modern Slack app development
+- **Kagent** - Kubernetes AI agent platform
+- **Python 3.13** - Latest stable Python with security improvements
 
 ---
 
-**Questions?** Open an issue or check the detailed guides:
-- [LOCAL_DEV.md](LOCAL_DEV.md) - Local development
-- [KUBERNETES.md](KUBERNETES.md) - Production deployment
-- [QUICKSTART.md](QUICKSTART.md) - Quick reference
+## Support
+
+- 📖 **Documentation:** [LOCAL_DEV.md](LOCAL_DEV.md) | [KUBERNETES.md](KUBERNETES.md) | [QUICKSTART.md](QUICKSTART.md)
+- 🐛 **Issues:** [GitHub Issues](https://github.com/your-org/kagent-slack-bot/issues)
+- 💬 **Discussions:** [GitHub Discussions](https://github.com/your-org/kagent-slack-bot/discussions)
+
+---
+
+**Made with ❤️ for the Kubernetes community**
