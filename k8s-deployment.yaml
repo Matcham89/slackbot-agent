@@ -1,0 +1,83 @@
+# Kagent Slack Bot - Kubernetes Deployment
+#
+# This deployment uses separate environment variables for namespace and agent name
+# to make the configuration more dynamic and flexible.
+#
+# PREREQUISITES:
+# 1. Create the secret with your Slack tokens:
+#
+#    kubectl create secret generic slack-credentials \
+#      --from-literal=bot-token='xoxb-your-bot-token-here' \
+#      --from-literal=app-token='xapp-your-app-token-here' \
+#      --namespace=apps
+#
+# 2. Build and push your Docker image:
+#    docker build -t matcham89/kagent-slack-bot:latest .
+#    docker push matcham89/kagent-slack-bot:latest
+#
+# 3. Apply this deployment:
+#    kubectl apply -f k8s-deployment.yaml
+#
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kagent-slack-bot
+  namespace: apps
+  labels:
+    app: kagent-slack-bot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kagent-slack-bot
+  template:
+    metadata:
+      labels:
+        app: kagent-slack-bot
+    spec:
+      containers:
+      - name: bot
+        image: matcham89/kagent-slack-bot:latest
+        imagePullPolicy: Always
+        env:
+        # Slack tokens from secret
+        - name: SLACK_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: slack-credentials
+              key: bot-token
+        - name: SLACK_APP_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: slack-credentials
+              key: app-token
+
+        # Kagent Configuration - Separate components for flexibility
+        # Change these values to match your Kagent deployment
+        - name: KAGENT_BASE_URL
+          value: "http://kagent-controller.apps.svc.cluster.local:8083"
+        - name: KAGENT_NAMESPACE
+          value: "apps"
+        - name: KAGENT_AGENT_NAME
+          value: "k8s-agent"
+        
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        
+        # Simple liveness probe
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 10
+          periodSeconds: 30
+      
+      restartPolicy: Always
