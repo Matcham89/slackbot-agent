@@ -70,71 +70,71 @@ SLACK_APP_TOKEN=xapp-your-app-token-here
 # Enable Multi-Cluster Routing
 ENABLE_MULTI_CLUSTER=true
 
+# Kagent Controller (single endpoint)
+KAGENT_BASE_URL=http://kagent-controller:8083
+KAGENT_NAMESPACE=kagent
+
 # Define Available Clusters
 KAGENT_CLUSTERS=test,dev,prod
 KAGENT_DEFAULT_CLUSTER=test
 
-# Cluster Endpoint URLs
-# Note: Adjust hostnames/IPs to match your infrastructure
-KAGENT_TEST_URL=http://test-kagent.example.com:8083/api/a2a/kagent/k8s-agent
-KAGENT_DEV_URL=http://dev-kagent.example.com:8083/api/a2a/kagent/k8s-agent
-KAGENT_PROD_URL=http://prod-kagent.example.com:8083/api/a2a/kagent/k8s-agent
+# Agent Pattern (generates: k8s-agent-test, k8s-agent-dev, k8s-agent-prod)
+KAGENT_AGENT_PATTERN=k8s-agent-{cluster}
+
+# This will route to:
+# - test: http://kagent-controller:8083/api/a2a/kagent/k8s-agent-test
+# - dev:  http://kagent-controller:8083/api/a2a/kagent/k8s-agent-dev
+# - prod: http://kagent-controller:8083/api/a2a/kagent/k8s-agent-prod
 ```
 
 ### 3. Network Access Setup
 
 #### Option A: Port Forwarding (Laptop/Local Development)
 
-Open separate terminals for each cluster:
+Forward the Kagent controller from the cluster where your agents are running:
 
 ```bash
-# Terminal 1: Test cluster
-kubectl config use-context test-cluster
+# Port-forward the Kagent controller
+kubectl config use-context your-cluster-context
 kubectl port-forward -n kagent svc/kagent-controller 8083:8083
-
-# Terminal 2: Dev cluster
-kubectl config use-context dev-cluster
-kubectl port-forward -n kagent svc/kagent-controller 8084:8083
-
-# Terminal 3: Prod cluster
-kubectl config use-context prod-cluster
-kubectl port-forward -n kagent svc/kagent-controller 8085:8083
 ```
 
-Update `.env` with localhost ports:
+Update `.env` to use localhost:
 ```bash
-KAGENT_TEST_URL=http://localhost:8083/api/a2a/kagent/k8s-agent
-KAGENT_DEV_URL=http://localhost:8084/api/a2a/kagent/k8s-agent
-KAGENT_PROD_URL=http://localhost:8085/api/a2a/kagent/k8s-agent
+KAGENT_BASE_URL=http://localhost:8083
+KAGENT_NAMESPACE=kagent
+KAGENT_AGENT_PATTERN=k8s-agent-{cluster}
 ```
 
 #### Option B: VPN/Direct Network Access (Server)
 
-If your server has direct network access to cluster networks:
+If your server has direct network access to the Kagent controller:
 
 ```bash
-# Use cluster-internal service names or external IPs
-KAGENT_TEST_URL=http://test-kagent-controller.test-cluster.local:8083/api/a2a/kagent/k8s-agent
-KAGENT_DEV_URL=http://dev-kagent-controller.dev-cluster.local:8083/api/a2a/kagent/k8s-agent
-KAGENT_PROD_URL=http://prod-kagent-controller.prod-cluster.local:8083/api/a2a/kagent/k8s-agent
+# Use the Kagent controller hostname or IP
+KAGENT_BASE_URL=http://kagent-controller.example.com:8083
+KAGENT_NAMESPACE=kagent
+KAGENT_AGENT_PATTERN=k8s-agent-{cluster}
 ```
 
 ### 4. Test Connection
 
-Verify each endpoint is reachable:
+Verify each agent endpoint is reachable:
 
 ```bash
-# Test cluster
-curl http://localhost:8083/api/a2a/kagent/k8s-agent/.well-known/agent.json
+# Test agent
+curl http://localhost:8083/api/a2a/kagent/k8s-agent-test/.well-known/agent.json
 
-# Dev cluster
-curl http://localhost:8084/api/a2a/kagent/k8s-agent/.well-known/agent.json
+# Dev agent
+curl http://localhost:8083/api/a2a/kagent/k8s-agent-dev/.well-known/agent.json
 
-# Prod cluster
-curl http://localhost:8085/api/a2a/kagent/k8s-agent/.well-known/agent.json
+# Prod agent
+curl http://localhost:8083/api/a2a/kagent/k8s-agent-prod/.well-known/agent.json
 ```
 
-Each should return agent metadata JSON (not 404).
+Each should return agent metadata JSON (not 404). If you get 404, verify:
+- The agent names match your configuration
+- The agents exist in your Kagent deployment
 
 ### 5. Run the Bot
 
@@ -153,9 +153,10 @@ You should see:
 🔧 Kagent client initialized (multi-cluster routing mode)
    Clusters: test, dev, prod
    Default: test
-   test: http://localhost:8083/api/a2a/kagent/k8s-agent
-   dev: http://localhost:8084/api/a2a/kagent/k8s-agent
-   prod: http://localhost:8085/api/a2a/kagent/k8s-agent
+   Using pattern-based routing: k8s-agent-{cluster}
+   test: http://localhost:8083/api/a2a/kagent/k8s-agent-test/
+   dev: http://localhost:8083/api/a2a/kagent/k8s-agent-dev/
+   prod: http://localhost:8083/api/a2a/kagent/k8s-agent-prod/
 ✅ Slack app initialized
 ⚡ Bot is running! Waiting for @mentions...
 ```
@@ -290,7 +291,7 @@ Thread 1:
 
 3. **Verify DNS/hostname resolution:**
    ```bash
-   ping test-kagent-controller.example.com
+   ping kagent-controller.example.com
    ```
 
 ### Wrong Cluster Responding
@@ -329,7 +330,7 @@ Thread 1:
 The server/laptop running the bot needs:
 
 - **Outbound HTTPS** to Slack (api.slack.com, wss://wss-*.slack.com)
-- **HTTP access** to all Kagent controller endpoints
+- **HTTP access** to the Kagent controller endpoint
 - **Port availability** for port-forwarding (if using that method)
 
 ### Firewall Rules (Example)
@@ -338,10 +339,8 @@ The server/laptop running the bot needs:
 # Allow outbound HTTPS to Slack
 sudo ufw allow out 443/tcp
 
-# Allow outbound to Kagent endpoints (adjust IPs)
+# Allow outbound to Kagent controller (adjust IP)
 sudo ufw allow out to 10.0.1.10 port 8083
-sudo ufw allow out to 10.0.2.10 port 8083
-sudo ufw allow out to 10.0.3.10 port 8083
 ```
 
 ---
