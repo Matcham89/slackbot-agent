@@ -87,37 +87,37 @@ def detect_cluster_from_message(message: str, available_clusters: List[str]) -> 
 
 
 class KagentClient:
-    def __init__(self, base_url: str, namespace: str, agent_name: Optional[str] = None,
-                 multi_cluster: bool = False, clusters: Optional[List[str]] = None,
-                 default_cluster: Optional[str] = None, agent_pattern: Optional[str] = None):
+    def __init__(self, base_url: Optional[str] = None, namespace: Optional[str] = None,
+                 agent_name: Optional[str] = None, multi_cluster: bool = False,
+                 cluster_endpoints: Optional[Dict[str, str]] = None,
+                 default_cluster: Optional[str] = None):
         """
         Initialize Kagent client with single or multi-cluster support.
 
         Args:
-            base_url: Base URL of Kagent controller
-            namespace: Kagent namespace
-            agent_name: Agent name (for single-cluster mode)
+            base_url: Base URL of Kagent controller (single-cluster mode)
+            namespace: Kagent namespace (single-cluster mode)
+            agent_name: Agent name (single-cluster mode)
             multi_cluster: Enable multi-cluster routing
-            clusters: List of available cluster names
+            cluster_endpoints: Dict mapping cluster names to full endpoint URLs
             default_cluster: Default cluster when none detected
-            agent_pattern: Agent name pattern with {cluster} placeholder
         """
-        self.base_url = base_url
-        self.namespace = namespace
         self.multi_cluster = multi_cluster
 
         if multi_cluster:
-            self.clusters = clusters or []
-            self.default_cluster = default_cluster or (clusters[0] if clusters else None)
-            self.agent_pattern = agent_pattern or "k8s-agent-{cluster}"
+            self.cluster_endpoints = cluster_endpoints or {}
+            self.clusters = list(cluster_endpoints.keys()) if cluster_endpoints else []
+            self.default_cluster = default_cluster or (self.clusters[0] if self.clusters else None)
             # Thread contexts: {thread_ts: {cluster: contextId}}
             self.thread_contexts: Dict[str, Dict[str, str]] = {}
-            logger.info(f"🔧 Kagent client initialized (multi-cluster mode)")
-            logger.info(f"   Base URL: {base_url}/api/a2a/{namespace}/")
+            logger.info(f"🔧 Kagent client initialized (multi-cluster routing mode)")
             logger.info(f"   Clusters: {', '.join(self.clusters)}")
             logger.info(f"   Default: {self.default_cluster}")
-            logger.info(f"   Pattern: {self.agent_pattern}")
+            for cluster, endpoint in self.cluster_endpoints.items():
+                logger.info(f"   {cluster}: {endpoint}")
         else:
+            self.base_url = base_url
+            self.namespace = namespace
             self.agent_name = agent_name
             self.endpoint = f"{base_url}/api/a2a/{namespace}/{agent_name}/"
             # Thread contexts: {thread_ts: contextId}
@@ -125,16 +125,11 @@ class KagentClient:
             logger.info(f"🔧 Kagent client initialized (single-cluster mode)")
             logger.info(f"   Endpoint: {self.endpoint}")
 
-    def _get_agent_name(self, cluster: str) -> str:
-        """Generate agent name from cluster using pattern."""
-        return self.agent_pattern.replace("{cluster}", cluster)
-
     def _get_endpoint(self, cluster: Optional[str] = None) -> str:
         """Get endpoint URL for specified cluster or default."""
         if self.multi_cluster:
             target_cluster = cluster or self.default_cluster
-            agent = self._get_agent_name(target_cluster)
-            return f"{self.base_url}/api/a2a/{self.namespace}/{agent}/"
+            return self.cluster_endpoints.get(target_cluster, "")
         else:
             return self.endpoint
     
@@ -400,15 +395,41 @@ else:
 ENABLE_MULTI_CLUSTER = os.environ.get("ENABLE_MULTI_CLUSTER", "false").lower() in ("true", "1", "yes")
 
 if ENABLE_MULTI_CLUSTER:
-    logger.info(f"🌐 Multi-cluster mode enabled")
+    logger.info(f"🌐 Multi-cluster routing mode enabled")
     KAGENT_CLUSTERS_STR = os.environ.get("KAGENT_CLUSTERS", "")
     KAGENT_CLUSTERS = [c.strip() for c in KAGENT_CLUSTERS_STR.split(",") if c.strip()]
     KAGENT_DEFAULT_CLUSTER = os.environ.get("KAGENT_DEFAULT_CLUSTER", KAGENT_CLUSTERS[0] if KAGENT_CLUSTERS else None)
-    KAGENT_AGENT_PATTERN = os.environ.get("KAGENT_AGENT_PATTERN", "k8s-agent-{cluster}")
+
+    # Two configuration methods:
+    # Method 1: Pattern-based (same base URL, different agent names)
+    # Method 2: Full URLs per cluster (different controllers)
+
+    KAGENT_AGENT_PATTERN = os.environ.get("KAGENT_AGENT_PATTERN")
+
+    CLUSTER_ENDPOINTS = {}
+
+    if KAGENT_AGENT_PATTERN:
+        # Pattern-based: Build endpoints using base URL + pattern
+        logger.info(f"   Using pattern-based routing: {KAGENT_AGENT_PATTERN}")
+        for cluster in KAGENT_CLUSTERS:
+            agent_name = KAGENT_AGENT_PATTERN.replace("{cluster}", cluster)
+            endpoint = f"{KAGENT_BASE_URL}/api/a2a/{KAGENT_NAMESPACE}/{agent_name}/"
+            CLUSTER_ENDPOINTS[cluster] = endpoint
+    else:
+        # URL-based: Read individual URLs for each cluster
+        # Format: KAGENT_<CLUSTER>_URL (e.g., KAGENT_TEST_URL, KAGENT_DEV_URL)
+        logger.info(f"   Using URL-based routing")
+        for cluster in KAGENT_CLUSTERS:
+            env_var = f"KAGENT_{cluster.upper()}_URL"
+            endpoint = os.environ.get(env_var)
+            if endpoint:
+                CLUSTER_ENDPOINTS[cluster] = endpoint
+            else:
+                logger.warning(f"⚠️ Missing endpoint for cluster '{cluster}': {env_var} not set")
 else:
     KAGENT_CLUSTERS = None
     KAGENT_DEFAULT_CLUSTER = None
-    KAGENT_AGENT_PATTERN = None
+    CLUSTER_ENDPOINTS = None
 
 # Validate required environment variables
 if not SLACK_BOT_TOKEN or not SLACK_APP_TOKEN:
@@ -430,7 +451,20 @@ if ENABLE_MULTI_CLUSTER:
     if not KAGENT_DEFAULT_CLUSTER:
         logger.error("❌ Multi-cluster mode enabled but KAGENT_DEFAULT_CLUSTER not provided")
         exit(1)
+    if not CLUSTER_ENDPOINTS:
+        logger.error("❌ Multi-cluster mode enabled but no cluster endpoint URLs found")
+        logger.error("    Set KAGENT_<CLUSTER>_URL for each cluster (e.g., KAGENT_TEST_URL)")
+        exit(1)
+    if KAGENT_DEFAULT_CLUSTER not in CLUSTER_ENDPOINTS:
+        logger.error(f"❌ Default cluster '{KAGENT_DEFAULT_CLUSTER}' has no endpoint URL")
+        exit(1)
 else:
+    if not KAGENT_BASE_URL:
+        logger.error("❌ Missing required environment variable: KAGENT_BASE_URL or KAGENT_A2A_URL")
+        exit(1)
+    if not KAGENT_NAMESPACE:
+        logger.error("❌ Missing required environment variable: KAGENT_NAMESPACE")
+        exit(1)
     if not KAGENT_AGENT_NAME:
         logger.error("❌ Missing required environment variable: KAGENT_AGENT_NAME (or provide KAGENT_A2A_URL)")
         exit(1)
@@ -440,12 +474,9 @@ app = App(token=SLACK_BOT_TOKEN)
 
 if ENABLE_MULTI_CLUSTER:
     kagent = KagentClient(
-        base_url=KAGENT_BASE_URL,
-        namespace=KAGENT_NAMESPACE,
         multi_cluster=True,
-        clusters=KAGENT_CLUSTERS,
-        default_cluster=KAGENT_DEFAULT_CLUSTER,
-        agent_pattern=KAGENT_AGENT_PATTERN
+        cluster_endpoints=CLUSTER_ENDPOINTS,
+        default_cluster=KAGENT_DEFAULT_CLUSTER
     )
 else:
     kagent = KagentClient(

@@ -1,0 +1,33 @@
+[Unit]
+Description=Kagent Slack Bot - Multi-Cluster Router
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+WorkingDirectory=/path/to/slackbot-agent
+EnvironmentFile=/path/to/slackbot-agent/.env
+
+# Python virtual environment activation and bot execution
+ExecStart=/path/to/slackbot-agent/venv/bin/python /path/to/slackbot-agent/slack_bot.py
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kagent-slack-bot
+
+# Security hardening (optional but recommended)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/path/to/slackbot-agent
+
+[Install]
+WantedBy=multi-user.target
