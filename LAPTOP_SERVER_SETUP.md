@@ -85,7 +85,18 @@ KAGENT_AGENT_PATTERN=k8s-agent-{cluster}
 # - test: http://kagent-controller:8083/api/a2a/kagent/k8s-agent-test
 # - dev:  http://kagent-controller:8083/api/a2a/kagent/k8s-agent-dev
 # - prod: http://kagent-controller:8083/api/a2a/kagent/k8s-agent-prod
+
+# Optional: Cloudflare Access authentication (for external access)
+# CF_ACCESS_CLIENT_ID=your-client-id-from-cloudflare
+# CF_ACCESS_CLIENT_SECRET=your-client-secret-from-cloudflare
 ```
+
+**Authentication Options:**
+
+- **Internal Access** (bot on same network): No CF credentials needed
+- **External Access** (bot outside network): Add CF_ACCESS credentials above
+
+For Cloudflare setup, see: [ISTIO_CLOUDFLARE_SETUP.md](ISTIO_CLOUDFLARE_SETUP.md)
 
 ### 3. Network Access Setup
 

@@ -35,13 +35,15 @@ Ask questions about your Kubernetes cluster in natural language directly from Sl
 ## Features
 
 ✅ **Natural Language Interface** - Ask questions like "@kagent what pods are running in production?"
-✅ **Conversational Context** - Maintains conversation history within Slack threads
+✅ **Multi-Cluster Routing** - Single bot routes to multiple clusters based on keywords
+✅ **Conversational Context** - Maintains conversation history within Slack threads (per cluster)
 ✅ **A2A Protocol** - Standard Agent2Agent communication with streaming support
 ✅ **Socket Mode** - No public URLs needed, works behind firewalls
+✅ **Cloudflare Access Support** - Optional service token authentication for external access
+✅ **Istio Integration** - Native support for Istio ingress gateway
 ✅ **Production Ready** - Security hardened with proper error handling
 ✅ **Kubernetes Native** - Designed for cluster deployment with full pod security compliance
-✅ **Read-Only Filesystem** - Runs with restricted security context
-✅ **Non-Root User** - Executes as UID 1000 for enhanced security
+✅ **Flexible Deployment** - Run on laptop, server, or in-cluster
 
 ---
 
@@ -227,9 +229,9 @@ kubectl logs -n kagent -l app=kagent-slack-bot -f
 
 ### Environment Variables
 
-The bot supports two configuration approaches:
+The bot supports multiple configuration modes:
 
-#### Option 1: Single URL (Recommended for simple setups)
+#### Option 1: Single Cluster (Simple Setup)
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-your-bot-token
@@ -237,15 +239,62 @@ SLACK_APP_TOKEN=xapp-your-app-token
 KAGENT_A2A_URL=http://localhost:8083/api/a2a/kagent/k8s-agent
 ```
 
-#### Option 2: Separate Components (Recommended for Kubernetes)
+#### Option 2: Multi-Cluster Routing (Recommended)
+
+Route to different clusters based on keywords in messages:
 
 ```bash
+# Slack tokens
 SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_APP_TOKEN=xapp-your-app-token
-KAGENT_BASE_URL=http://kagent-controller.kagent.svc.cluster.local:8083
+
+# Enable multi-cluster routing
+ENABLE_MULTI_CLUSTER=true
+
+# Kagent configuration
+KAGENT_BASE_URL=http://kagent-controller:8083
 KAGENT_NAMESPACE=kagent
-KAGENT_AGENT_NAME=k8s-agent
+
+# Define clusters
+KAGENT_CLUSTERS=test,dev,prod
+KAGENT_DEFAULT_CLUSTER=test
+
+# Agent naming pattern
+KAGENT_AGENT_PATTERN=k8s-agent-{cluster}
 ```
+
+This routes messages like:
+- `"@kagent list pods on test cluster"` → `k8s-agent-test`
+- `"@kagent check dev"` → `k8s-agent-dev`
+- `"@kagent show namespaces"` → default cluster (`k8s-agent-test`)
+
+#### Option 3: External Access with Cloudflare (Production)
+
+For exposing through Cloudflare tunnel with authentication:
+
+```bash
+# Slack tokens
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-token
+
+# Multi-cluster routing
+ENABLE_MULTI_CLUSTER=true
+KAGENT_BASE_URL=https://kagent.yourdomain.com
+KAGENT_NAMESPACE=kagent
+KAGENT_CLUSTERS=test,dev,prod
+KAGENT_DEFAULT_CLUSTER=test
+KAGENT_AGENT_PATTERN=k8s-agent-{cluster}
+
+# Cloudflare Access service token (optional)
+CF_ACCESS_CLIENT_ID=your-client-id
+CF_ACCESS_CLIENT_SECRET=your-client-secret
+```
+
+**See detailed setup guides:**
+- [LAPTOP_SERVER_SETUP.md](LAPTOP_SERVER_SETUP.md) - Run on laptop/Debian server
+- [ISTIO_CLOUDFLARE_SETUP.md](ISTIO_CLOUDFLARE_SETUP.md) - Istio + Cloudflare tunnel
+- [TALOS_SETUP.md](TALOS_SETUP.md) - Talos Linux specific configuration
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and fixes
 
 ### Slack App Setup
 

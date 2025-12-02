@@ -215,6 +215,13 @@ class KagentClient:
             "User-Agent": "kagent-slack-bot/1.0.0"
         }
 
+        # Add Cloudflare Access service token headers if configured
+        cf_client_id = os.environ.get("CF_ACCESS_CLIENT_ID")
+        cf_client_secret = os.environ.get("CF_ACCESS_CLIENT_SECRET")
+        if cf_client_id and cf_client_secret:
+            headers["CF-Access-Client-Id"] = cf_client_id
+            headers["CF-Access-Client-Secret"] = cf_client_secret
+
         try:
             # Security: SSL verification enabled by default
             # Security: Timeout prevents hanging connections

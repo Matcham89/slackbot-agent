@@ -168,7 +168,47 @@ KAGENT_DEFAULT_CLUSTER=test
 
 # Agent pattern
 KAGENT_AGENT_PATTERN=k8s-agent-{cluster}
+
+# Optional: Cloudflare Access service token (for authentication)
+# If you enabled Cloudflare Access, add these:
+# CF_ACCESS_CLIENT_ID=your-client-id-from-cloudflare
+# CF_ACCESS_CLIENT_SECRET=your-client-secret-from-cloudflare
 ```
+
+### Optional: Enable Cloudflare Access Authentication
+
+For added security, protect your Kagent endpoint with Cloudflare Access:
+
+#### 1. Create Service Token
+
+1. Go to **Cloudflare Zero Trust Dashboard**
+2. Navigate to **Access** → **Service Authentication** → **Service Tokens**
+3. Click **Create Service Token**
+4. Name: `kagent-slack-bot`
+5. **Save the Client ID and Client Secret** (you won't see them again!)
+
+#### 2. Create Access Application
+
+1. **Access** → **Applications** → **Add an application**
+2. Choose **Self-hosted**
+3. Configure:
+   - **Application name**: `Kagent API`
+   - **Subdomain**: `kagent`
+   - **Domain**: `yourdomain.com`
+4. Add Policy:
+   - **Policy name**: `Service Token Only`
+   - **Action**: `Service Auth`
+   - **Include**: Service Token → Select `kagent-slack-bot`
+5. Save
+
+#### 3. Add Credentials to `.env`
+
+```bash
+CF_ACCESS_CLIENT_ID=abc123def456...
+CF_ACCESS_CLIENT_SECRET=xyz789abc123...
+```
+
+The bot will automatically send these headers when making requests to Kagent.
 
 ---
 
