@@ -87,6 +87,17 @@ spec:
           value: "kagent"
         - name: KAGENT_AGENT_NAME
           value: "k8s-agent"
+
+        # Multi-Cluster Configuration (Optional Feature)
+        # Uncomment these to enable multi-cluster routing
+        # - name: ENABLE_MULTI_CLUSTER
+        #   value: "true"
+        # - name: KAGENT_CLUSTERS
+        #   value: "test,dev,prod"
+        # - name: KAGENT_DEFAULT_CLUSTER
+        #   value: "test"
+        # - name: KAGENT_AGENT_PATTERN
+        #   value: "k8s-agent-{cluster}"
         
         # Temporary directory for Python (needed with readOnlyRootFilesystem)
         volumeMounts:
