@@ -436,29 +436,36 @@ if not SLACK_BOT_TOKEN or not SLACK_APP_TOKEN:
     logger.error("❌ Missing required environment variables: SLACK_BOT_TOKEN and/or SLACK_APP_TOKEN")
     exit(1)
 
-if not KAGENT_BASE_URL:
-    logger.error("❌ Missing required environment variable: KAGENT_BASE_URL or KAGENT_A2A_URL")
-    exit(1)
-
-if not KAGENT_NAMESPACE:
-    logger.error("❌ Missing required environment variable: KAGENT_NAMESPACE (or provide KAGENT_A2A_URL)")
-    exit(1)
-
 if ENABLE_MULTI_CLUSTER:
+    # Multi-cluster mode validation
     if not KAGENT_CLUSTERS:
         logger.error("❌ Multi-cluster mode enabled but KAGENT_CLUSTERS not provided")
         exit(1)
     if not KAGENT_DEFAULT_CLUSTER:
         logger.error("❌ Multi-cluster mode enabled but KAGENT_DEFAULT_CLUSTER not provided")
         exit(1)
+
+    # Check if using pattern-based or URL-based routing
+    if KAGENT_AGENT_PATTERN:
+        # Pattern-based: need base URL and namespace
+        if not KAGENT_BASE_URL:
+            logger.error("❌ Pattern-based routing requires KAGENT_BASE_URL")
+            exit(1)
+        if not KAGENT_NAMESPACE:
+            logger.error("❌ Pattern-based routing requires KAGENT_NAMESPACE")
+            exit(1)
+
+    # Verify endpoints were generated/loaded
     if not CLUSTER_ENDPOINTS:
-        logger.error("❌ Multi-cluster mode enabled but no cluster endpoint URLs found")
-        logger.error("    Set KAGENT_<CLUSTER>_URL for each cluster (e.g., KAGENT_TEST_URL)")
+        logger.error("❌ Multi-cluster mode enabled but no cluster endpoints configured")
+        logger.error("    Option 1 (Pattern): Set KAGENT_AGENT_PATTERN=k8s-agent-{cluster}")
+        logger.error("    Option 2 (URLs): Set KAGENT_<CLUSTER>_URL for each cluster")
         exit(1)
     if KAGENT_DEFAULT_CLUSTER not in CLUSTER_ENDPOINTS:
         logger.error(f"❌ Default cluster '{KAGENT_DEFAULT_CLUSTER}' has no endpoint URL")
         exit(1)
 else:
+    # Single-cluster mode validation
     if not KAGENT_BASE_URL:
         logger.error("❌ Missing required environment variable: KAGENT_BASE_URL or KAGENT_A2A_URL")
         exit(1)
