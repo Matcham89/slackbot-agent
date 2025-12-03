@@ -76,18 +76,43 @@ The bot should respond with context - it remembers "the first one" = first names
 
 ## Configuration
 
-### Update Namespace or Agent
+### Multi-Cluster Setup
 
-Edit `k8s-deployment.yaml` and modify the `KAGENT_A2A_URL`:
+The deployment is pre-configured for multi-cluster routing with cluster-specific IPs. Edit `k8s-deployment.yaml` to customize:
 
 ```yaml
-- name: KAGENT_A2A_URL
-  value: "http://kagent-controller.<NAMESPACE>.svc.cluster.local:8083/api/a2a/<NAMESPACE>/<AGENT-NAME>"
+# Define your clusters
+- name: KAGENT_CLUSTERS
+  value: "test,dev,prod"
+
+# Set cluster-specific base URLs (different IP for each cluster)
+- name: KAGENT_TEST_BASE_URL
+  value: "http://192.168.1.200:8083"
+- name: KAGENT_DEV_BASE_URL
+  value: "http://192.168.1.201:8083"
+- name: KAGENT_PROD_BASE_URL
+  value: "http://192.168.1.202:8083"
+
+# Agent pattern (use same agent name or add {cluster} placeholder)
+- name: KAGENT_AGENT_PATTERN
+  value: "k8s-agent"
 ```
 
-Example for different namespace:
+This allows the bot to detect environment keywords ("test", "dev", "prod") in messages and route to the appropriate cluster automatically.
+
+### Single Cluster Setup
+
+If you only have one cluster, disable multi-cluster mode:
+
 ```yaml
-value: "http://kagent-controller.production.svc.cluster.local:8083/api/a2a/production/k8s-prod-agent"
+- name: ENABLE_MULTI_CLUSTER
+  value: "false"
+- name: KAGENT_BASE_URL
+  value: "http://kagent-controller.kagent.svc.cluster.local:8083"
+- name: KAGENT_NAMESPACE
+  value: "kagent"
+- name: KAGENT_AGENT_NAME
+  value: "k8s-agent"
 ```
 
 ### Update Resource Limits

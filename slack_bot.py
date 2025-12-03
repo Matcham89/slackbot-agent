@@ -417,10 +417,21 @@ if ENABLE_MULTI_CLUSTER:
 
     if KAGENT_AGENT_PATTERN:
         # Pattern-based: Build endpoints using base URL + pattern
+        # Supports per-cluster base URLs via KAGENT_<CLUSTER>_BASE_URL
         logger.info(f"   Using pattern-based routing: {KAGENT_AGENT_PATTERN}")
         for cluster in KAGENT_CLUSTERS:
+            # Check for cluster-specific base URL first (e.g., KAGENT_TEST_BASE_URL)
+            cluster_base_url_var = f"KAGENT_{cluster.upper()}_BASE_URL"
+            cluster_base_url = os.environ.get(cluster_base_url_var)
+
+            # Fall back to global KAGENT_BASE_URL if cluster-specific not set
+            base_url = cluster_base_url if cluster_base_url else KAGENT_BASE_URL
+
+            if cluster_base_url:
+                logger.info(f"   Cluster '{cluster}': Using cluster-specific base URL from {cluster_base_url_var}")
+
             agent_name = KAGENT_AGENT_PATTERN.replace("{cluster}", cluster)
-            endpoint = f"{KAGENT_BASE_URL}/api/a2a/{KAGENT_NAMESPACE}/{agent_name}/"
+            endpoint = f"{base_url}/api/a2a/{KAGENT_NAMESPACE}/{agent_name}/"
             CLUSTER_ENDPOINTS[cluster] = endpoint
     else:
         # URL-based: Read individual URLs for each cluster
@@ -454,10 +465,19 @@ if ENABLE_MULTI_CLUSTER:
 
     # Check if using pattern-based or URL-based routing
     if KAGENT_AGENT_PATTERN:
-        # Pattern-based: need base URL and namespace
-        if not KAGENT_BASE_URL:
-            logger.error("❌ Pattern-based routing requires KAGENT_BASE_URL")
+        # Pattern-based: need base URL (global or per-cluster) and namespace
+        # Check if at least one base URL is configured (global or cluster-specific)
+        has_base_url = KAGENT_BASE_URL is not None
+        has_cluster_specific_urls = any(
+            os.environ.get(f"KAGENT_{cluster.upper()}_BASE_URL")
+            for cluster in KAGENT_CLUSTERS
+        )
+
+        if not has_base_url and not has_cluster_specific_urls:
+            logger.error("❌ Pattern-based routing requires either KAGENT_BASE_URL or cluster-specific URLs")
+            logger.error("    Set KAGENT_BASE_URL for global URL, or KAGENT_<CLUSTER>_BASE_URL for per-cluster URLs")
             exit(1)
+
         if not KAGENT_NAMESPACE:
             logger.error("❌ Pattern-based routing requires KAGENT_NAMESPACE")
             exit(1)

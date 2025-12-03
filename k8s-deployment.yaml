@@ -53,7 +53,7 @@ spec:
         #   - docker.io/username/kagent-slack-bot:latest
         #   - ghcr.io/username/kagent-slack-bot:latest
         #   - gcr.io/project-id/kagent-slack-bot:latest
-        image: your-registry/kagent-slack-bot:latest
+        image: matcham89/kagent-slack-bot:1.0.1
         imagePullPolicy: Always
 
         # Container security context (fixes pod security restricted warnings)
@@ -81,23 +81,30 @@ spec:
 
         # Kagent Configuration - Separate components for flexibility
         # Change these values to match your Kagent deployment
-        - name: KAGENT_BASE_URL
-          value: "http://kagent-controller.kagent.svc.cluster.local:8083"
         - name: KAGENT_NAMESPACE
           value: "kagent"
-        - name: KAGENT_AGENT_NAME
-          value: "k8s-agent"
 
         # Multi-Cluster Configuration (Optional Feature)
         # Uncomment these to enable multi-cluster routing
-        # - name: ENABLE_MULTI_CLUSTER
-        #   value: "true"
-        # - name: KAGENT_CLUSTERS
-        #   value: "test,dev,prod"
-        # - name: KAGENT_DEFAULT_CLUSTER
-        #   value: "test"
-        # - name: KAGENT_AGENT_PATTERN
-        #   value: "k8s-agent-{cluster}"
+        - name: ENABLE_MULTI_CLUSTER
+          value: "true"
+        - name: KAGENT_CLUSTERS
+          value: "test,dev"
+        - name: KAGENT_DEFAULT_CLUSTER
+          value: "test"
+        - name: KAGENT_AGENT_PATTERN
+          value: "k8s-agent"
+
+        # Cluster-Specific Base URLs
+        # Each cluster can have its own IP/hostname for the Kagent controller
+        - name: KAGENT_TEST_BASE_URL
+          value: "http://192.168.1.200:8083"
+        - name: KAGENT_DEV_BASE_URL
+          value: "http://192.168.1.201:8083"
+
+        # Optional: Global fallback base URL (used if cluster-specific URL not set)
+        # - name: KAGENT_BASE_URL
+        #   value: "http://kagent-controller.kagent.svc.cluster.local:8083"
         
         # Temporary directory for Python (needed with readOnlyRootFilesystem)
         volumeMounts:

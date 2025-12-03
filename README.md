@@ -252,21 +252,25 @@ SLACK_APP_TOKEN=xapp-your-app-token
 ENABLE_MULTI_CLUSTER=true
 
 # Kagent configuration
-KAGENT_BASE_URL=http://kagent-controller:8083
 KAGENT_NAMESPACE=kagent
 
 # Define clusters
 KAGENT_CLUSTERS=test,dev,prod
 KAGENT_DEFAULT_CLUSTER=test
 
-# Agent naming pattern
-KAGENT_AGENT_PATTERN=k8s-agent-{cluster}
+# Agent naming pattern (use same agent name across all clusters)
+KAGENT_AGENT_PATTERN=k8s-agent
+
+# Cluster-specific base URLs (each cluster has its own IP/endpoint)
+KAGENT_TEST_BASE_URL=http://192.168.1.200:8083
+KAGENT_DEV_BASE_URL=http://192.168.1.201:8083
+KAGENT_PROD_BASE_URL=http://192.168.1.202:8083
 ```
 
 This routes messages like:
-- `"@kagent list pods on test cluster"` → `k8s-agent-test`
-- `"@kagent check dev"` → `k8s-agent-dev`
-- `"@kagent show namespaces"` → default cluster (`k8s-agent-test`)
+- `"@kagent list pods on test cluster"` → `http://192.168.1.200:8083/api/a2a/kagent/k8s-agent`
+- `"@kagent check dev"` → `http://192.168.1.201:8083/api/a2a/kagent/k8s-agent`
+- `"@kagent show namespaces"` → default cluster (test: `192.168.1.200`)
 
 #### Option 3: External Access with Cloudflare (Production)
 
@@ -279,11 +283,15 @@ SLACK_APP_TOKEN=xapp-your-app-token
 
 # Multi-cluster routing
 ENABLE_MULTI_CLUSTER=true
-KAGENT_BASE_URL=https://kagent.yourdomain.com
 KAGENT_NAMESPACE=kagent
 KAGENT_CLUSTERS=test,dev,prod
 KAGENT_DEFAULT_CLUSTER=test
-KAGENT_AGENT_PATTERN=k8s-agent-{cluster}
+KAGENT_AGENT_PATTERN=k8s-agent
+
+# Cluster-specific URLs (via Cloudflare tunnels)
+KAGENT_TEST_BASE_URL=https://kagent-test.yourdomain.com
+KAGENT_DEV_BASE_URL=https://kagent-dev.yourdomain.com
+KAGENT_PROD_BASE_URL=https://kagent-prod.yourdomain.com
 
 # Cloudflare Access service token (optional)
 CF_ACCESS_CLIENT_ID=your-client-id
