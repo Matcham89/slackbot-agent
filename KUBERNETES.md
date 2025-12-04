@@ -1,17 +1,36 @@
-# Kubernetes Deployment Guide
+# Kubernetes Deployment Guide - Method 1: Single Bot Per Cluster
 
-Deploy Kagent Slack bot to your Kubernetes cluster for production use.
+Deploy one Kagent Slack bot instance per cluster. The bot runs inside the cluster and connects directly to the Kagent controller via the A2A protocol (port 8083).
+
+## When to Use This Method
+
+- You want isolated, independent bot instances for each cluster
+- Each cluster has its own dedicated Slack bot (e.g., @kagent-test, @kagent-prod)
+- Simple setup with direct A2A connection
+- No AgentGateway required
+
+## Architecture
+
+```
+Slack → Bot (in cluster) → Kagent Controller (port 8083) → k8s-agent → Kubernetes API
+```
+
+The bot runs as a pod in the same cluster as Kagent, using in-cluster service discovery.
+
+---
 
 ## Prerequisites
 
 - **Kubernetes cluster** with Kagent installed
-- **kubectl** configured and connected
-- **Slack App** configured (see [README.md](README.md#slack-app-configuration))
-- **Docker registry** access (optional, for custom builds)
+- **kubectl** configured and connected to your cluster
+- **Slack App** configured (see [README.md](README.md#slack-app-setup))
+- **Docker image** - Use `matcham89/kagent-slack-bot:1.0.1` or build your own
 
-## Quick Deployment (3 steps)
+---
 
-### Step 1: Create Secret
+## Quick Deployment (3 Steps)
+
+### Step 1: Create Slack Credentials Secret
 
 Create a Kubernetes secret with your Slack tokens:
 
@@ -22,26 +41,25 @@ kubectl create secret generic slack-credentials \
   --namespace=kagent
 ```
 
-Replace:
-- `xoxb-your-bot-token-here` - Bot User OAuth Token from Slack
-- `xapp-your-app-token-here` - App-Level Token from Slack
-- `kagent` - Namespace where Kagent is deployed (default from quickstart)
+**Get your tokens:**
+- Bot token (xoxb-...): Slack App → OAuth & Permissions → Bot User OAuth Token
+- App token (xapp-...): Slack App → Basic Information → App-Level Tokens
 
 **Verify secret was created:**
 ```bash
 kubectl get secret slack-credentials -n kagent
 ```
 
-### Step 2: Deploy Bot
+### Step 2: Deploy the Bot
 
 ```bash
-kubectl apply -f k8s-deployment.yaml
+kubectl apply -f k8s-deployment-single-cluster.yaml
 ```
 
-**Note:** If you built a custom Docker image, update the image in `k8s-deployment.yaml` first:
-```yaml
-image: your-registry/kagent-slack-bot:latest
-```
+This creates a Deployment with:
+- 1 replica running in the `kagent` namespace
+- Direct A2A connection to `kagent-controller` service (port 8083)
+- Security-hardened pod (restricted pod security standard)
 
 ### Step 3: Verify Deployment
 
@@ -53,96 +71,89 @@ kubectl get pods -n kagent -l app=kagent-slack-bot
 kubectl logs -n kagent -l app=kagent-slack-bot -f
 ```
 
-Expected output:
+**Expected output:**
 ```
-✓ Slack app initialized
+✅ Slack app initialized
 🚀 Starting Kagent Slack Bot...
-   Kagent URL: http://kagent-controller.kagent.svc.cluster.local:8083/api/a2a/kagent/k8s-agent/
+   Kagent: http://kagent-controller.kagent.svc.cluster.local:8083
 ⚡️ Kagent Slack Bot is running!
 ⚡️ Bolt app is running!
 ```
 
+---
+
 ## Test in Slack
 
 ```
+# Invite the bot to a channel
 /invite @kagent
+
+# Ask questions
 @kagent list all namespaces
-@kagent how many pods in the first one?
+@kagent what pods are running?
+@kagent show me logs for nginx
 ```
 
-The bot should respond with context - it remembers "the first one" = first namespace!
+The bot should respond with context - it maintains conversation history within each Slack thread!
 
-**Note:** Each Slack thread maintains its own conversation context with kagent. Context is stored in-memory, so it resets when the pod restarts.
+---
 
 ## Configuration
 
-### Multi-Cluster Setup
+### Update Namespace or Agent
 
-The deployment is pre-configured for multi-cluster routing with cluster-specific IPs. Edit `k8s-deployment.yaml` to customize:
-
-```yaml
-# Define your clusters
-- name: KAGENT_CLUSTERS
-  value: "test,dev,prod"
-
-# Set cluster-specific base URLs (different IP for each cluster)
-- name: KAGENT_TEST_BASE_URL
-  value: "http://192.168.1.200:8083"
-- name: KAGENT_DEV_BASE_URL
-  value: "http://192.168.1.201:8083"
-- name: KAGENT_PROD_BASE_URL
-  value: "http://192.168.1.202:8083"
-
-# Agent pattern (use same agent name or add {cluster} placeholder)
-- name: KAGENT_AGENT_PATTERN
-  value: "k8s-agent"
-```
-
-This allows the bot to detect environment keywords ("test", "dev", "prod") in messages and route to the appropriate cluster automatically.
-
-### Single Cluster Setup
-
-If you only have one cluster, disable multi-cluster mode:
+Edit `k8s-deployment-single-cluster.yaml` to customize:
 
 ```yaml
-- name: ENABLE_MULTI_CLUSTER
-  value: "false"
+env:
+# Change the namespace where Kagent is deployed
+- name: KAGENT_NAMESPACE
+  value: "kagent"  # Change to your namespace
+
+# Change the agent name
+- name: KAGENT_AGENT_NAME
+  value: "k8s-agent"  # Change to your agent name
+
+# Update service URL if needed
 - name: KAGENT_BASE_URL
   value: "http://kagent-controller.kagent.svc.cluster.local:8083"
-- name: KAGENT_NAMESPACE
-  value: "kagent"
-- name: KAGENT_AGENT_NAME
-  value: "k8s-agent"
+```
+
+**Apply changes:**
+```bash
+kubectl apply -f k8s-deployment-single-cluster.yaml
 ```
 
 ### Update Resource Limits
 
-In `k8s-deployment.yaml`:
+Default resources:
 
 ```yaml
 resources:
   requests:
     memory: "128Mi"  # Minimum memory
-    cpu: "100m"      # Minimum CPU (0.1 core)
+    cpu: "100m"      # 0.1 CPU core
   limits:
     memory: "256Mi"  # Maximum memory
-    cpu: "200m"      # Maximum CPU (0.2 cores)
+    cpu: "200m"      # 0.2 CPU cores
 ```
 
-Adjust based on your needs:
-- Small workspace: Default values are fine
-- Large workspace (100+ users): Increase to 512Mi memory, 500m CPU
+**Adjust based on your needs:**
+- **Small workspace** (< 10 users): Default values are fine
+- **Large workspace** (100+ users): Increase to `512Mi` memory, `500m` CPU
 
-### Multiple Replicas
+### Multiple Replicas (High Availability)
 
-For high availability:
+For failover:
 
 ```yaml
 spec:
-  replicas: 2  # Run 2 pods
+  replicas: 2  # Run 2 pods for redundancy
 ```
 
-**Note:** Slack Socket Mode maintains one connection, so multiple replicas won't distribute load but provide failover.
+**Note:** Slack Socket Mode maintains one connection, so multiple replicas provide failover but won't distribute load.
+
+---
 
 ## Building Custom Image
 
@@ -155,7 +166,7 @@ If you modified `slack_bot.py` and want to deploy your changes:
 export REGISTRY=docker.io/your-username
 export TAG=v1.0.0
 
-# Build and push
+# Build and push multi-platform image
 ./build.sh
 ```
 
@@ -168,12 +179,14 @@ docker build -t your-registry/kagent-slack-bot:latest .
 # Push
 docker push your-registry/kagent-slack-bot:latest
 
-# Update k8s-deployment.yaml with your image
+# Update image in k8s-deployment-single-cluster.yaml
 # Then deploy
-kubectl apply -f k8s-deployment.yaml
+kubectl apply -f k8s-deployment-single-cluster.yaml
 ```
 
-## Updating Tokens
+---
+
+## Updating Slack Tokens
 
 If you need to rotate Slack tokens:
 
@@ -194,23 +207,26 @@ kubectl rollout restart deployment/kagent-slack-bot -n kagent
 kubectl rollout status deployment/kagent-slack-bot -n kagent
 ```
 
+---
+
 ## Monitoring
 
 ### View Logs
 
 ```bash
 # Follow logs in real-time
-kubectl logs -n apps -l app=kagent-slack-bot -f
+kubectl logs -n kagent -l app=kagent-slack-bot -f
 
 # View last 100 lines
-kubectl logs -n apps -l app=kagent-slack-bot --tail=100
+kubectl logs -n kagent -l app=kagent-slack-bot --tail=100
 
 # View logs from specific pod
-kubectl logs -n apps kagent-slack-bot-xxxxx-xxxxx
+kubectl logs -n kagent kagent-slack-bot-xxxxx-xxxxx
 ```
 
 **Look for context management logs:**
 ```
+🔔 Received app_mention event
 🆕 Starting new conversation
 🔄 Using existing contextId: 7d5e0706-...
 📊 Processed 7 events from stream
@@ -221,20 +237,22 @@ kubectl logs -n apps kagent-slack-bot-xxxxx-xxxxx
 
 ```bash
 # List pods
-kubectl get pods -n apps -l app=kagent-slack-bot
+kubectl get pods -n kagent -l app=kagent-slack-bot
 
 # Describe pod (shows events and errors)
-kubectl describe pod -n apps -l app=kagent-slack-bot
+kubectl describe pod -n kagent -l app=kagent-slack-bot
 
-# Get pod details
-kubectl get pod -n apps -l app=kagent-slack-bot -o yaml
+# Check resource usage
+kubectl top pod -n kagent -l app=kagent-slack-bot
 ```
 
 ### View Events
 
 ```bash
-kubectl get events -n apps --sort-by='.lastTimestamp' | grep kagent-slack-bot
+kubectl get events -n kagent --sort-by='.lastTimestamp' | grep kagent-slack-bot
 ```
+
+---
 
 ## Troubleshooting
 
@@ -242,39 +260,40 @@ kubectl get events -n apps --sort-by='.lastTimestamp' | grep kagent-slack-bot
 
 **Check events:**
 ```bash
-kubectl describe pod -n apps -l app=kagent-slack-bot
+kubectl describe pod -n kagent -l app=kagent-slack-bot
 ```
 
-Common issues:
+**Common issues:**
 - **ImagePullBackOff**: Docker image not accessible
   - Solution: Check image name, ensure registry access
 - **CrashLoopBackOff**: Bot crashing on startup
   - Solution: Check logs with `kubectl logs`
 - **Pending**: Can't schedule pod
-  - Solution: Check cluster resources
+  - Solution: Check cluster resources with `kubectl describe node`
 
 ### Bot Not Responding
 
 **Check logs:**
 ```bash
-kubectl logs -n apps -l app=kagent-slack-bot --tail=50
+kubectl logs -n kagent -l app=kagent-slack-bot --tail=50
 ```
 
-Look for:
-- `✓ Slack app initialized` - Tokens are valid
+**Look for:**
+- `✅ Slack app initialized` - Tokens are valid
 - `⚡️ Bolt app is running!` - Socket Mode connected
 - `🔔 Received app_mention event` - Events are coming through
 
 **If no events received:**
-1. Verify Socket Mode is enabled in Slack app
-2. Check Event Subscriptions has `app_mention`
+1. Verify Socket Mode is enabled in Slack app settings
+2. Check Event Subscriptions has `app_mention` event
 3. Reinstall app to workspace after config changes
+4. Check Slack tokens in secret are correct
 
 ### Can't Connect to Kagent
 
 **Check service exists:**
 ```bash
-kubectl get svc kagent-controller -n apps
+kubectl get svc kagent-controller -n kagent
 ```
 
 **Test from within cluster:**
@@ -283,93 +302,74 @@ kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
   curl http://kagent-controller.kagent.svc.cluster.local:8083/api/a2a/kagent/k8s-agent/.well-known/agent.json
 ```
 
-Should return agent info (not 404 or connection refused).
+**Should return agent info** (not 404 or connection refused).
+
+**If connection fails:**
+- Verify Kagent is running: `kubectl get pods -n kagent`
+- Check Kagent service: `kubectl get svc -n kagent`
+- Verify namespace and agent name in deployment yaml
 
 ### Secret Not Found
 
 ```bash
 # Check secret exists
-kubectl get secret slack-credentials -n apps
+kubectl get secret slack-credentials -n kagent
 
 # View secret (base64 encoded)
-kubectl get secret slack-credentials -n apps -o yaml
+kubectl get secret slack-credentials -n kagent -o yaml
 
 # Check secret has correct keys
-kubectl get secret slack-credentials -n apps -o jsonpath='{.data}' | jq keys
+kubectl get secret slack-credentials -n kagent -o jsonpath='{.data}' | jq keys
 # Should show: ["app-token", "bot-token"]
 ```
 
+---
+
 ## Security Best Practices
 
-### Use Namespace Isolation
+### Namespace Isolation
 
-Deploy bot in same namespace as Kagent for network policies:
+Deploy bot in same namespace as Kagent for network policy isolation:
 
 ```bash
-# Create namespace if needed
-kubectl create namespace kagent
+# Ensure kagent namespace exists
+kubectl get namespace kagent
 
-# Deploy everything in kagent namespace
-kubectl apply -f k8s-deployment.yaml -n kagent
+# Deploy in kagent namespace
+kubectl apply -f k8s-deployment-single-cluster.yaml
 ```
 
 ### Limit Permissions
 
-The bot doesn't need any Kubernetes permissions. Default ServiceAccount is fine.
+The bot doesn't need any Kubernetes API permissions. The default ServiceAccount is fine, and `automountServiceAccountToken: false` prevents unnecessary token mounting.
 
-### External Secret Management
+### Pod Security Standards
 
-For production, consider external secret managers:
+The deployment is configured for the `restricted` pod security standard:
 
-**Using Sealed Secrets:**
-```bash
-# Install sealed-secrets controller
-kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.24.0/controller.yaml
-
-# Create sealed secret
-kubectl create secret generic slack-credentials \
-  --from-literal=bot-token='xoxb-...' \
-  --from-literal=app-token='xapp-...' \
-  --dry-run=client -o yaml | \
-  kubeseal -o yaml > sealed-secret.yaml
-
-# Apply sealed secret
-kubectl apply -f sealed-secret.yaml -n apps
-```
-
-**Using External Secrets Operator:**
 ```yaml
-apiVersion: external-secrets.io/v1beta1
-kind: ExternalSecret
-metadata:
-  name: slack-credentials
-  namespace: kagent
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    name: aws-secrets-manager
-    kind: SecretStore
-  target:
-    name: slack-credentials
-  data:
-  - secretKey: bot-token
-    remoteRef:
-      key: slack/bot-token
-  - secretKey: app-token
-    remoteRef:
-      key: slack/app-token
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
 ```
 
-### Enable Pod Security Standards
+Verify your namespace enforces pod security:
 
 ```yaml
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: apps
+  name: kagent
   labels:
     pod-security.kubernetes.io/enforce: restricted
 ```
+
+---
 
 ## Scaling Considerations
 
@@ -380,7 +380,7 @@ metadata:
 - Multiple replicas won't distribute load
 - Can cause duplicate message processing
 
-**Use replicas=1** or **replicas=2** for failover only.
+**Use replicas=1** or **replicas=2** (for failover only).
 
 ### Vertical Scaling
 
@@ -396,59 +396,30 @@ resources:
     cpu: "500m"
 ```
 
-### Monitoring Resource Usage
-
-```bash
-# Check current usage
-kubectl top pod -n apps -l app=kagent-slack-bot
-
-# View metrics
-kubectl describe pod -n apps -l app=kagent-slack-bot | grep -A 5 "Requests\|Limits"
-```
-
-## Backup and Disaster Recovery
-
-### Backup Configuration
-
-```bash
-# Export secret (excluding sensitive data)
-kubectl get secret slack-credentials -n apps -o yaml > backup-secret.yaml
-
-# Export deployment
-kubectl get deployment kagent-slack-bot -n apps -o yaml > backup-deployment.yaml
-```
-
-### Restore
-
-```bash
-# Restore secret
-kubectl apply -f backup-secret.yaml
-
-# Restore deployment
-kubectl apply -f backup-deployment.yaml
-```
+---
 
 ## Uninstalling
 
 ```bash
 # Delete deployment
-kubectl delete deployment kagent-slack-bot -n apps
+kubectl delete deployment kagent-slack-bot -n kagent
 
 # Delete secret
-kubectl delete secret slack-credentials -n apps
+kubectl delete secret slack-credentials -n kagent
 ```
+
+---
 
 ## Next Steps
 
-- **Monitor metrics**: Set up Prometheus/Grafana
-- **Add alerting**: Configure PagerDuty/Opsgenie for bot failures
-- **Multiple agents**: Deploy additional bots for different agents
-- **Custom commands**: Extend `slack_bot.py` with slash commands
-- **Persistent context**: Add Redis for conversation history across pod restarts
-- **Advanced features**: Implement file uploads, interactive buttons, or forms
+- **Multi-cluster setup**: See [LAPTOP_SERVER_SETUP.md](LAPTOP_SERVER_SETUP.md) for Method 2
+- **Local development**: See [LOCAL_DEV.md](LOCAL_DEV.md)
+- **Troubleshooting**: See [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+
+---
 
 ## Support
 
+- **Logs not showing up?** Check [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+- **Questions?** Open an issue in the GitHub repository
 - **Kagent Issues**: https://github.com/kagent-ai/kagent/issues
-- **Slack API**: https://api.slack.com/docs
-- **This bot**: Check logs first, then open an issue in your repo

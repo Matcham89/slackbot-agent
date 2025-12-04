@@ -1,158 +1,169 @@
-# Kagent Slack Bot - Quickstart
+# Kagent Slack Bot - Quick Start Guide
 
-Get your Slack bot running in **5 minutes**. Choose your deployment method:
+Get your Kagent Slack bot running in 5 minutes!
 
-## Prerequisites
+## Choose Your Deployment Method
 
-- Slack workspace with admin access
-- Kagent installed in Kubernetes
-- Python 3.8+ (for local) OR kubectl access (for K8s)
+### Method 1: Single Bot Per Cluster (**Simplest**)
+- One bot per cluster (e.g., @kagent-test, @kagent-prod)
+- Bot runs inside the cluster
+- Direct A2A connection (port 8083)
+- **[Full guide: KUBERNETES.md](KUBERNETES.md)**
 
-## Step 1: Create Slack App (2 min)
+### Method 2: Multi-Cluster via AgentGateway
+- ONE bot for all clusters (@kagent)
+- Detect cluster keywords in messages
+- Requires AgentGateway (port 8080)
+- **[Full guide: LAPTOP_SERVER_SETUP.md](LAPTOP_SERVER_SETUP.md)**
 
-1. Go to https://api.slack.com/apps → **Create New App** → **From scratch**
-2. Name: `kagent`, select workspace
+---
 
-**Add Scopes** (OAuth & Permissions → Bot Token Scopes):
-- `app_mentions:read`
-- `chat:write`
-- `channels:history`
+## Quick Start - Method 1 (Single Bot Per Cluster)
 
-**Enable Socket Mode** (Socket Mode → Toggle ON):
-- Generate token with `connections:write` scope
-- Save token (starts with `xapp-`)
+### Prerequisites
+- Kagent installed in your cluster
+- kubectl configured
+- Slack workspace admin access
 
-**Enable Events** ⚠️ CRITICAL:
-- Event Subscriptions → Toggle ON
-- Leave "Request URL" BLANK
-- Subscribe to bot events: `app_mention`
-- Click "Save Changes"
+### 3-Step Deployment
 
-**Install App** (OAuth & Permissions):
-- Click "Reinstall to Workspace" → Allow
-- Save Bot Token (starts with `xoxb-`)
-
-## Step 2: Choose Deployment Method
-
-### Option A: Local Development (Testing)
-
+**1. Create Slack credentials secret:**
 ```bash
-# Port-forward Kagent
-kubectl port-forward -n apps svc/kagent-controller 8083:8083 &
-
-# Setup bot
-cd kagent-slack
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Configure
-cp .env.example .env
-# Edit .env with your tokens:
-#   SLACK_BOT_TOKEN=xoxb-...
-#   SLACK_APP_TOKEN=xapp-...
-
-# Run
-python slack_bot.py
+kubectl create secret generic slack-credentials \
+  --from-literal=bot-token='xoxb-your-bot-token' \
+  --from-literal=app-token='xapp-your-app-token' \
+  --namespace=kagent
 ```
 
-✅ **Done!** See [LOCAL_DEV.md](LOCAL_DEV.md) for detailed guide.
-
-### Option B: Kubernetes (Production)
-
+**2. Deploy the bot:**
 ```bash
-# Create secret
-kubectl create secret generic slack-credentials \
-  --from-literal=bot-token='xoxb-your-token' \
-  --from-literal=app-token='xapp-your-token' \
-  --namespace=kagent
+kubectl apply -f k8s-deployment-single-cluster.yaml
+```
 
-# Deploy
-kubectl apply -f k8s-deployment.yaml
-
-# Check logs
+**3. Verify:**
+```bash
 kubectl logs -n kagent -l app=kagent-slack-bot -f
 ```
 
-✅ **Done!** See [KUBERNETES.md](KUBERNETES.md) for detailed guide.
+**Expected output:**
+```
+✅ Slack app initialized
+⚡️ Kagent Slack Bot is running!
+```
 
-## Step 3: Test in Slack (1 min)
-
+### Test in Slack
 ```
 /invite @kagent
 @kagent list all namespaces
-@kagent how many pods in the first one?
-```
-
-Bot should respond with context! It remembers "the first one" refers to the first namespace. 🎉
-
-**Each Slack thread = separate conversation with full context.**
-
-## Troubleshooting
-
-### Not responding?
-1. Check **Event Subscriptions** has `app_mention`
-2. Click **Reinstall to Workspace**
-3. Restart bot
-
-### Can't connect?
-```bash
-# Test endpoint
-curl http://localhost:8083/api/a2a/kagent/k8s-agent/.well-known/agent.json
-```
-
-## What's Next?
-
-- **Detailed local setup**: [LOCAL_DEV.md](LOCAL_DEV.md)
-- **Production deployment**: [KUBERNETES.md](KUBERNETES.md)
-- **Full documentation**: [README.md](README.md)
-
-## A2A Protocol Reference
-
-The bot uses `message/stream` method with SSE (Server-Sent Events):
-
-```json
-{
-  "method": "message/stream",
-  "params": {
-    "message": {
-      "kind": "message",
-      "role": "user",
-      "parts": [{"kind": "text", "text": "your question"}],
-      "messageId": "uuid",
-      "contextId": "thread-context-id"
-    }
-  }
-}
-```
-
-**Key points:**
-- Method: `message/stream` (streaming with SSE)
-- Context: `contextId` maintains conversation across messages
-- Response: Streamed as multiple SSE events
-- Agent reply: In `event.status.message.parts[0].text` where `role='agent'`
-- Library: `sseclient-py` handles SSE parsing
-
-## Project Files
-
-```
-kagent-slack/
-├── slack_bot.py           # Main bot (~310 lines)
-│                          #   - KagentClient class
-│                          #   - SSE parsing
-│                          #   - Context management
-├── requirements.txt       # Dependencies (includes sseclient-py)
-├── k8s-deployment.yaml   # K8s deployment
-├── Dockerfile            # Container image
-├── README.md             # Overview
-├── LOCAL_DEV.md          # Local dev guide
-├── KUBERNETES.md         # K8s deployment guide
-└── QUICKSTART.md         # This file
 ```
 
 ---
 
-**Need Help?**
-- Local dev: [LOCAL_DEV.md](LOCAL_DEV.md#troubleshooting)
-- Kubernetes: [KUBERNETES.md](KUBERNETES.md#troubleshooting)
-- Slack config: [README.md](README.md#slack-app-configuration)
+## Quick Start - Method 2 (Multi-Cluster)
+
+### Prerequisites
+- Python 3.13+ installed
+- AgentGateway deployed on each cluster
+- Network access to cluster IPs
+
+### 4-Step Setup
+
+**1. Clone and install:**
+```bash
+git clone https://github.com/your-org/kagent-slack-bot.git
+cd kagent-slack-bot
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+**2. Configure `.env`:**
+```bash
+cp .env.example .env
+nano .env
+```
+
+Set:
+```bash
+ENABLE_MULTI_CLUSTER=true
+KAGENT_CLUSTERS=test,dev
+KAGENT_TEST_BASE_URL=http://192.168.1.200:8080
+KAGENT_DEV_BASE_URL=http://192.168.1.201:8080
+```
+
+**3. Run the bot:**
+```bash
+python slack_bot.py
+```
+
+**4. Test in Slack:**
+```
+/invite @kagent
+@kagent list pods in test cluster
+@kagent check dev namespaces
+```
+
+---
+
+## Getting Slack Tokens
+
+1. Go to https://api.slack.com/apps
+2. **Create New App** → From scratch
+3. Name it "kagent" and select your workspace
+4. **Socket Mode**:
+   - Enable Socket Mode
+   - Create app-level token with `connections:write` scope
+   - Copy the token (starts with `xapp-`)
+5. **OAuth & Permissions**:
+   - Add Bot Token Scopes:
+     - `app_mentions:read`
+     - `chat:write`
+     - `channels:history`
+   - Install App to Workspace
+   - Copy Bot User OAuth Token (starts with `xoxb-`)
+6. **Event Subscriptions**:
+   - Enable Events
+   - Subscribe to `app_mention` bot event
+
+---
+
+## Configuration Comparison
+
+| Feature | Method 1 | Method 2 |
+|---------|----------|----------|
+| Slack bots | One per cluster | One bot total |
+| Deployment | In-cluster (Kubernetes) | Laptop/server/K8s |
+| Port | 8083 (direct A2A) | 8080 (AgentGateway) |
+| Setup time | 3 minutes | 5 minutes |
+| AgentGateway | Not required | Required |
+| Cluster switching | Switch bots | Use keywords in message |
+
+---
+
+## Next Steps
+
+- **Method 1 full guide**: [KUBERNETES.md](KUBERNETES.md)
+- **Method 2 full guide**: [LAPTOP_SERVER_SETUP.md](LAPTOP_SERVER_SETUP.md)
+- **Local development**: [LOCAL_DEV.md](LOCAL_DEV.md)
+- **Troubleshooting**: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+- **Main README**: [README.md](README.md)
+
+---
+
+## Troubleshooting
+
+### Bot not responding?
+1. Check logs: `kubectl logs -n kagent -l app=kagent-slack-bot`
+2. Verify Slack app settings (Socket Mode, Event Subscriptions)
+3. Check secret is created: `kubectl get secret slack-credentials -n kagent`
+
+### Can't connect to Kagent?
+```bash
+# Method 1 (port 8083)
+curl http://localhost:8083/api/a2a/kagent/k8s-agent/.well-known/agent.json
+
+# Method 2 (port 8080)
+curl http://192.168.1.200:8080/api/a2a/kagent/k8s-agent/.well-known/agent.json
+```
+
+**More help**: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)

@@ -1,17 +1,33 @@
+# Kagent Slack Bot - Systemd Service File
+#
+# This is a template for running the bot as a systemd service on Linux servers.
+# Use this for Method 2 (Multi-Cluster via AgentGateway) deployments.
+#
+# Installation:
+# 1. Copy this file to /etc/systemd/system/kagent-slack-bot.service
+# 2. Update the paths and username below
+# 3. Enable and start: sudo systemctl enable --now kagent-slack-bot
+#
+# See LAPTOP_SERVER_SETUP.md for full deployment guide.
+
 [Unit]
-Description=Kagent Slack Bot - Multi-Cluster Router
+Description=Kagent Slack Bot (Multi-Cluster via AgentGateway)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
+
+# Update these with your actual username and paths
 User=YOUR_USERNAME
 Group=YOUR_USERNAME
-WorkingDirectory=/path/to/slackbot-agent
-EnvironmentFile=/path/to/slackbot-agent/.env
+WorkingDirectory=/home/YOUR_USERNAME/kagent-slack-bot
+
+# Environment file containing Slack tokens and cluster config
+EnvironmentFile=/home/YOUR_USERNAME/kagent-slack-bot/.env
 
 # Python virtual environment activation and bot execution
-ExecStart=/path/to/slackbot-agent/venv/bin/python /path/to/slackbot-agent/slack_bot.py
+ExecStart=/home/YOUR_USERNAME/kagent-slack-bot/venv/bin/python slack_bot.py
 
 # Restart policy
 Restart=always
@@ -22,12 +38,9 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=kagent-slack-bot
 
-# Security hardening (optional but recommended)
+# Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/path/to/slackbot-agent
 
 [Install]
 WantedBy=multi-user.target

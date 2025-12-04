@@ -1,42 +1,56 @@
-# Kagent Slack Bot - Kubernetes Deployment
+# Kagent Slack Bot - Multi-Cluster Deployment (Method 2)
 #
-# This deployment uses separate environment variables for namespace and agent name
-# to make the configuration more dynamic and flexible.
+# Deploy ONE bot on a middleman machine that routes to multiple clusters
+# via AgentGateway IPs. The bot connects to each cluster's AgentGateway
+# on port 8080.
+#
+# Use this method when:
+# - You want a single bot to manage multiple clusters
+# - You have AgentGateway set up on each cluster
+# - The bot runs on a central machine (not in any specific cluster)
+# - Users specify cluster keywords (test, dev, prod) in messages
 #
 # PREREQUISITES:
-# 1. Create the secret with your Slack tokens:
+# 1. AgentGateway must be deployed and accessible on each cluster
+#    - Test cluster: 192.168.1.200:8080
+#    - Dev cluster: 192.168.1.201:8080
+#
+# 2. Create the secret with your Slack tokens:
 #
 #    kubectl create secret generic slack-credentials \
 #      --from-literal=bot-token='xoxb-your-bot-token-here' \
 #      --from-literal=app-token='xapp-your-app-token-here' \
-#      --namespace=kagent
+#      --namespace=default
 #
-# 2. Build and push your Docker image:
-#    ./build.sh
-#    (or manually: docker build -t your-registry/kagent-slack-bot:latest .)
+# 3. Build and push your Docker image (if customized):
+#    docker build -t your-registry/kagent-slack-bot:latest .
+#    docker push your-registry/kagent-slack-bot:latest
 #
-# 3. Update the image in this file (line 54) with your registry
+# 4. Update the cluster IPs below to match your AgentGateway endpoints
 #
-# 4. Apply this deployment:
-#    kubectl apply -f k8s-deployment.yaml
+# 5. Apply this deployment:
+#    kubectl apply -f k8s-deployment-multi-cluster.yaml
+#
+# NOTE: This deployment can run on any cluster or machine that can reach
+#       the AgentGateway IPs. It doesn't need to be in the kagent namespace.
 #
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: kagent-slack-bot
-  namespace: kagent
+  name: kagent-slack-bot-multi
+  namespace: default
   labels:
-    app: kagent-slack-bot
+    app: kagent-slack-bot-multi
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: kagent-slack-bot
+      app: kagent-slack-bot-multi
   template:
     metadata:
       labels:
-        app: kagent-slack-bot
+        app: kagent-slack-bot-multi
     spec:
       # Security context for the pod (2025 best practices)
       securityContext:
@@ -48,15 +62,11 @@ spec:
 
       containers:
       - name: bot
-        # Replace with your image: your-registry/kagent-slack-bot:latest
-        # Examples:
-        #   - docker.io/username/kagent-slack-bot:latest
-        #   - ghcr.io/username/kagent-slack-bot:latest
-        #   - gcr.io/project-id/kagent-slack-bot:latest
+        # Use official image or your custom build
         image: matcham89/kagent-slack-bot:1.0.1
         imagePullPolicy: Always
 
-        # Container security context (fixes pod security restricted warnings)
+        # Container security context
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -79,34 +89,39 @@ spec:
               name: slack-credentials
               key: app-token
 
-        # Kagent Configuration - Separate components for flexibility
-        # Change these values to match your Kagent deployment
+        # Multi-cluster configuration via AgentGateway
+        - name: ENABLE_MULTI_CLUSTER
+          value: "true"
+
+        # Namespace where agents are deployed (same across all clusters)
         - name: KAGENT_NAMESPACE
           value: "kagent"
 
-        # Multi-Cluster Configuration (Optional Feature)
-        # Uncomment these to enable multi-cluster routing
-        - name: ENABLE_MULTI_CLUSTER
-          value: "true"
+        # Define your clusters (comma-separated)
         - name: KAGENT_CLUSTERS
           value: "test,dev"
+
+        # Default cluster when no keyword is detected in message
         - name: KAGENT_DEFAULT_CLUSTER
           value: "test"
+
+        # Agent name pattern (use same agent name across all clusters)
         - name: KAGENT_AGENT_PATTERN
           value: "k8s-agent"
 
-        # Cluster-Specific Base URLs
-        # Each cluster can have its own IP/hostname for the Kagent controller
+        # AgentGateway endpoints (port 8080) for each cluster
+        # Update these IPs to match your AgentGateway deployments
         - name: KAGENT_TEST_BASE_URL
-          value: "http://192.168.1.200:8083"
-        - name: KAGENT_DEV_BASE_URL
-          value: "http://192.168.1.201:8083"
+          value: "http://192.168.1.200:8080"
 
-        # Optional: Global fallback base URL (used if cluster-specific URL not set)
-        # - name: KAGENT_BASE_URL
-        #   value: "http://kagent-controller.kagent.svc.cluster.local:8083"
-        
-        # Temporary directory for Python (needed with readOnlyRootFilesystem)
+        - name: KAGENT_DEV_BASE_URL
+          value: "http://192.168.1.201:8080"
+
+        # Add more clusters as needed:
+        # - name: KAGENT_PROD_BASE_URL
+        #   value: "http://192.168.1.202:8080"
+
+        # Temporary directories (needed with readOnlyRootFilesystem)
         volumeMounts:
         - name: tmp
           mountPath: /tmp
@@ -121,7 +136,7 @@ spec:
             memory: "256Mi"
             cpu: "200m"
 
-        # Liveness probe - check if Python process is responsive
+        # Health checks
         livenessProbe:
           exec:
             command:
@@ -133,7 +148,6 @@ spec:
           timeoutSeconds: 5
           failureThreshold: 3
 
-        # Readiness probe - bot must be running to be ready
         readinessProbe:
           exec:
             command:
@@ -144,7 +158,7 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
 
-      # Volumes for temporary files (required with readOnlyRootFilesystem)
+      # Volumes for temporary files
       volumes:
       - name: tmp
         emptyDir: {}
@@ -152,6 +166,4 @@ spec:
         emptyDir: {}
 
       restartPolicy: Always
-
-      # Automatically mount service account token only if needed
       automountServiceAccountToken: false
