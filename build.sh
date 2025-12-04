@@ -4,9 +4,9 @@
 set -euo pipefail
 
 # Configuration (override via environment variables)
-REGISTRY="${REGISTRY:-your-registry}"
+REGISTRY="${REGISTRY:-matcham89}"
 IMAGE_NAME="${IMAGE_NAME:-kagent-slack-bot}"
-TAG="${TAG:-latest}"
+TAG="${TAG:-1.0.1}"
 VERSION="${VERSION:-1.0.0}"
 NAMESPACE="${NAMESPACE:-kagent}"
 

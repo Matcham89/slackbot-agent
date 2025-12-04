@@ -4,19 +4,19 @@ Run the Kagent Slack bot locally on your machine for development and testing.
 
 ## Prerequisites
 
-- **Python 3.8+** installed
-- **Slack App** configured (see [README.md](README.md#slack-app-configuration))
+- **Python 3.13+** installed
+- **Slack App** configured (see [README.md](README.md#slack-app-setup))
 - **Kagent** running in Kubernetes cluster
 - **kubectl** access to your cluster
 
-## Quick Start (5 minutes)
+## Quick Start
 
 ### 1. Port-Forward Kagent
 
 Open a terminal and keep this running:
 
 ```bash
-kubectl port-forward -n apps svc/kagent-controller 8083:8083
+kubectl port-forward -n kagent svc/kagent-controller 8083:8083
 ```
 
 You should see:
@@ -30,8 +30,9 @@ Forwarding from [::1]:8083 -> 8083
 ### 2. Setup Python Environment
 
 ```bash
-# Clone/navigate to project
-cd kagent-slack
+# Clone repository
+git clone https://github.com/your-org/kagent-slack-bot.git
+cd kagent-slack-bot
 
 # Create virtual environment
 python3 -m venv venv
@@ -59,12 +60,15 @@ Edit `.env` with your tokens:
 SLACK_BOT_TOKEN=xoxb-your-bot-token-here
 SLACK_APP_TOKEN=xapp-your-app-token-here
 
+# Single-cluster mode (for local dev)
+ENABLE_MULTI_CLUSTER=false
+
 # Local port-forward endpoint
 KAGENT_A2A_URL=http://localhost:8083/api/a2a/kagent/k8s-agent
 ```
 
 **Important:** Update `kagent` and `k8s-agent` to match your setup:
-- `kagent` = namespace where Kagent is deployed (default from quickstart)
+- `kagent` = namespace where Kagent is deployed
 - `k8s-agent` = name of your agent
 
 ### 4. Run the Bot
@@ -75,14 +79,12 @@ python slack_bot.py
 
 You should see:
 ```
-2025-10-30 14:00:00 - INFO - ✓ Slack app initialized
-2025-10-30 14:00:00 - INFO - 🚀 Starting Kagent Slack Bot...
-2025-10-30 14:00:00 - INFO -    Kagent URL: http://localhost:8083/api/a2a/kagent/k8s-agent/
-2025-10-30 14:00:00 - INFO -    Bot token: xoxb-8039506410246-9...
-2025-10-30 14:00:00 - INFO -    App token: xapp-1-A09Q4NC7F7B-9...
-2025-10-30 14:00:00 - INFO - ⚡️ Kagent Slack Bot is running!
-2025-10-30 14:00:00 - INFO -    Waiting for @kagent mentions in Slack...
-2025-10-30 14:00:01 - INFO - ⚡️ Bolt app is running!
+✅ Slack app initialized
+🚀 Starting Kagent Slack Bot...
+   Kagent: http://localhost:8083
+   Agent: kagent/k8s-agent
+⚡ Bot is running! Waiting for @mentions...
+⚡ Bolt app is running!
 ```
 
 ### 5. Test in Slack
@@ -102,20 +104,19 @@ You should see:
 
 3. **Watch terminal logs:**
    ```
-   2025-10-30 14:01:00 - INFO - 🔔 Received app_mention
-   2025-10-30 14:01:00 - INFO -    Channel: C081QPRR7ED
-   2025-10-30 14:01:00 - INFO -    Thread: 1761860108.627629
-   2025-10-30 14:01:00 - INFO - 🆕 Starting new conversation
-   2025-10-30 14:01:00 - INFO - 📤 Sending message to Kagent
-   2025-10-30 14:01:00 - INFO - 📊 Processed 7 events from stream
-   2025-10-30 14:01:00 - INFO - 💬 Found agent response
-   2025-10-30 14:01:01 - INFO - ✅ Message processed
+   🔔 Received app_mention
+      Thread: 1761860108.627629
+   🆕 Starting new conversation
+   📤 Sending message to Kagent
+   📊 Processed 7 events from stream
+   💬 Found agent response
+   ✅ Message processed
 
    # Second message in same thread:
-   2025-10-30 14:01:30 - INFO - 🔔 Received app_mention
-   2025-10-30 14:01:30 - INFO - 🔄 Using existing contextId: 7d5e0706-...
-   2025-10-30 14:01:30 - INFO - 📊 Processed 5 events from stream
-   2025-10-30 14:01:30 - INFO - ✅ Message processed
+   🔔 Received app_mention
+   🔄 Using existing contextId: 7d5e0706-...
+   📊 Processed 5 events from stream
+   ✅ Message processed
    ```
 
 ## Development Workflow
@@ -146,36 +147,6 @@ curl http://localhost:8083/api/a2a/kagent/k8s-agent/.well-known/agent.json
 
 Should return agent info (not 404).
 
-**Test with specific message (returns SSE stream):**
-```bash
-curl -X POST http://localhost:8083/api/a2a/kagent/k8s-agent/ \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "message/stream",
-    "params": {
-      "message": {
-        "kind": "message",
-        "role": "user",
-        "parts": [{"kind": "text", "text": "hello"}],
-        "messageId": "test-123",
-        "metadata": {"displaySource": "user"}
-      }
-    },
-    "id": 1
-  }'
-```
-
-You'll see SSE events stream back:
-```
-event: task_status_update
-data: {"result":{"contextId":"abc-123","status":{...}}}
-
-event: task_status_update
-data: {"result":{"status":{"message":{"role":"agent","parts":[{"text":"Hello!"}]}}}}
-```
-
 ## Troubleshooting
 
 ### Port-forward disconnects
@@ -187,7 +158,7 @@ If you see "connection refused" errors:
 lsof -i :8083
 
 # If not, restart it
-kubectl port-forward -n apps svc/kagent-controller 8083:8083
+kubectl port-forward -n kagent svc/kagent-controller 8083:8083
 ```
 
 ### Bot not receiving events
@@ -203,12 +174,9 @@ kubectl port-forward -n apps svc/kagent-controller 8083:8083
 
 3. **Check tokens:**
    ```bash
-   # In your .env file
-   echo $SLACK_BOT_TOKEN | cut -c1-20
-   # Should start with: xoxb-
-
-   echo $SLACK_APP_TOKEN | cut -c1-20
-   # Should start with: xapp-
+   # View .env file
+   grep SLACK .env
+   # Tokens should start with xoxb- and xapp-
    ```
 
 ### Module not found errors
@@ -223,13 +191,9 @@ pip install -r requirements.txt
 
 ### Wrong namespace/agent
 
-If you get 404 errors:
+If you get 404 errors, update `.env` with correct values:
 
 ```bash
-# Check what agents exist
-kubectl get agents -A
-
-# Update .env with correct namespace and agent name
 KAGENT_A2A_URL=http://localhost:8083/api/a2a/<NAMESPACE>/<AGENT-NAME>
 ```
 
@@ -239,28 +203,13 @@ When done developing:
 
 ```bash
 # Stop the bot (Ctrl+C in terminal)
-
 # Stop port-forward (Ctrl+C in port-forward terminal)
-
 # Deactivate virtual environment
 deactivate
 ```
 
 ## Next Steps
 
-- Ready for production? See [KUBERNETES.md](KUBERNETES.md)
-- Need help with Slack config? See [README.md](README.md#slack-app-configuration)
-- Want to understand the code? Check out:
-  - `KagentClient` class - handles A2A protocol and SSE parsing
-  - `handle_mention` - Slack event handler
-  - `_parse_stream` - SSE event processing
-
-## Tips
-
-- **Use tmux/screen** to keep port-forward running in background
-- **Set up auto-reload** with `watchdog` for automatic restarts
-- **Use ngrok** if you want to test without Socket Mode
-- **Check Kagent logs** for agent-side issues:
-  ```bash
-  kubectl logs -n apps -l app=kagent-controller -f
-  ```
+- **Production deployment:** See [KUBERNETES.md](KUBERNETES.md) or [LAPTOP_SERVER_SETUP.md](LAPTOP_SERVER_SETUP.md)
+- **Slack app setup:** See [README.md](README.md#slack-app-setup)
+- **Troubleshooting:** See [TROUBLESHOOTING.md](TROUBLESHOOTING.md)

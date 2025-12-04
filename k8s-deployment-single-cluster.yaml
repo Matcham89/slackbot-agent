@@ -1,7 +1,12 @@
-# Kagent Slack Bot - Kubernetes Deployment
+# Kagent Slack Bot - Single Cluster Deployment (Method 1)
 #
-# This deployment uses separate environment variables for namespace and agent name
-# to make the configuration more dynamic and flexible.
+# Deploy one bot instance per cluster. The bot runs inside the cluster and
+# connects directly to the Kagent controller via A2A protocol on port 8083.
+#
+# Use this method when:
+# - You want a dedicated bot per cluster
+# - The bot runs in the same cluster as Kagent
+# - You want isolated, independent bot instances
 #
 # PREREQUISITES:
 # 1. Create the secret with your Slack tokens:
@@ -11,14 +16,14 @@
 #      --from-literal=app-token='xapp-your-app-token-here' \
 #      --namespace=kagent
 #
-# 2. Build and push your Docker image:
-#    ./build.sh
-#    (or manually: docker build -t your-registry/kagent-slack-bot:latest .)
+# 2. Build and push your Docker image (if customized):
+#    docker build -t your-registry/kagent-slack-bot:latest .
+#    docker push your-registry/kagent-slack-bot:latest
 #
-# 3. Update the image in this file (line 54) with your registry
+# 3. Update the image below if using custom build
 #
 # 4. Apply this deployment:
-#    kubectl apply -f k8s-deployment.yaml
+#    kubectl apply -f k8s-deployment-single-cluster.yaml
 #
 ---
 apiVersion: apps/v1
@@ -48,15 +53,11 @@ spec:
 
       containers:
       - name: bot
-        # Replace with your image: your-registry/kagent-slack-bot:latest
-        # Examples:
-        #   - docker.io/username/kagent-slack-bot:latest
-        #   - ghcr.io/username/kagent-slack-bot:latest
-        #   - gcr.io/project-id/kagent-slack-bot:latest
-        image: your-registry/kagent-slack-bot:latest
+        # Use official image or your custom build
+        image: matcham89/kagent-slack-bot:1.0.1
         imagePullPolicy: Always
 
-        # Container security context (fixes pod security restricted warnings)
+        # Container security context
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -79,16 +80,21 @@ spec:
               name: slack-credentials
               key: app-token
 
-        # Kagent Configuration - Separate components for flexibility
-        # Change these values to match your Kagent deployment
+        # Single-cluster configuration (direct A2A connection)
+        - name: ENABLE_MULTI_CLUSTER
+          value: "false"
+
+        # Direct A2A connection to Kagent controller (port 8083)
         - name: KAGENT_BASE_URL
           value: "http://kagent-controller.kagent.svc.cluster.local:8083"
+
         - name: KAGENT_NAMESPACE
           value: "kagent"
+
         - name: KAGENT_AGENT_NAME
           value: "k8s-agent"
-        
-        # Temporary directory for Python (needed with readOnlyRootFilesystem)
+
+        # Temporary directories (needed with readOnlyRootFilesystem)
         volumeMounts:
         - name: tmp
           mountPath: /tmp
@@ -103,7 +109,7 @@ spec:
             memory: "256Mi"
             cpu: "200m"
 
-        # Liveness probe - check if Python process is responsive
+        # Health checks
         livenessProbe:
           exec:
             command:
@@ -115,7 +121,6 @@ spec:
           timeoutSeconds: 5
           failureThreshold: 3
 
-        # Readiness probe - bot must be running to be ready
         readinessProbe:
           exec:
             command:
@@ -126,7 +131,7 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
 
-      # Volumes for temporary files (required with readOnlyRootFilesystem)
+      # Volumes for temporary files
       volumes:
       - name: tmp
         emptyDir: {}
@@ -134,6 +139,4 @@ spec:
         emptyDir: {}
 
       restartPolicy: Always
-
-      # Automatically mount service account token only if needed
       automountServiceAccountToken: false

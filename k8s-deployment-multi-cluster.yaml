@@ -1,0 +1,169 @@
+# Kagent Slack Bot - Multi-Cluster Deployment (Method 2)
+#
+# Deploy ONE bot on a middleman machine that routes to multiple clusters
+# via AgentGateway IPs. The bot connects to each cluster's AgentGateway
+# on port 8080.
+#
+# Use this method when:
+# - You want a single bot to manage multiple clusters
+# - You have AgentGateway set up on each cluster
+# - The bot runs on a central machine (not in any specific cluster)
+# - Users specify cluster keywords (test, dev, prod) in messages
+#
+# PREREQUISITES:
+# 1. AgentGateway must be deployed and accessible on each cluster
+#    - Test cluster: 192.168.1.200:8080
+#    - Dev cluster: 192.168.1.201:8080
+#
+# 2. Create the secret with your Slack tokens:
+#
+#    kubectl create secret generic slack-credentials \
+#      --from-literal=bot-token='xoxb-your-bot-token-here' \
+#      --from-literal=app-token='xapp-your-app-token-here' \
+#      --namespace=default
+#
+# 3. Build and push your Docker image (if customized):
+#    docker build -t your-registry/kagent-slack-bot:latest .
+#    docker push your-registry/kagent-slack-bot:latest
+#
+# 4. Update the cluster IPs below to match your AgentGateway endpoints
+#
+# 5. Apply this deployment:
+#    kubectl apply -f k8s-deployment-multi-cluster.yaml
+#
+# NOTE: This deployment can run on any cluster or machine that can reach
+#       the AgentGateway IPs. It doesn't need to be in the kagent namespace.
+#
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kagent-slack-bot-multi
+  namespace: default
+  labels:
+    app: kagent-slack-bot-multi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kagent-slack-bot-multi
+  template:
+    metadata:
+      labels:
+        app: kagent-slack-bot-multi
+    spec:
+      # Security context for the pod (2025 best practices)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+      - name: bot
+        # Use official image or your custom build
+        image: matcham89/kagent-slack-bot:1.0.1
+        imagePullPolicy: Always
+
+        # Container security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+              - ALL
+
+        env:
+        # Slack tokens from secret
+        - name: SLACK_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: slack-credentials
+              key: bot-token
+        - name: SLACK_APP_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: slack-credentials
+              key: app-token
+
+        # Multi-cluster configuration via AgentGateway
+        - name: ENABLE_MULTI_CLUSTER
+          value: "true"
+
+        # Namespace where agents are deployed (same across all clusters)
+        - name: KAGENT_NAMESPACE
+          value: "kagent"
+
+        # Define your clusters (comma-separated)
+        - name: KAGENT_CLUSTERS
+          value: "test,dev"
+
+        # Default cluster when no keyword is detected in message
+        - name: KAGENT_DEFAULT_CLUSTER
+          value: "test"
+
+        # Agent name pattern (use same agent name across all clusters)
+        - name: KAGENT_AGENT_PATTERN
+          value: "k8s-agent"
+
+        # AgentGateway endpoints (port 8080) for each cluster
+        # Update these IPs to match your AgentGateway deployments
+        - name: KAGENT_TEST_BASE_URL
+          value: "http://192.168.1.200:8080"
+
+        - name: KAGENT_DEV_BASE_URL
+          value: "http://192.168.1.201:8080"
+
+        # Add more clusters as needed:
+        # - name: KAGENT_PROD_BASE_URL
+        #   value: "http://192.168.1.202:8080"
+
+        # Temporary directories (needed with readOnlyRootFilesystem)
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: python-cache
+          mountPath: /home/kagent/.cache
+
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+        # Health checks
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+
+      # Volumes for temporary files
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: python-cache
+        emptyDir: {}
+
+      restartPolicy: Always
+      automountServiceAccountToken: false
