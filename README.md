@@ -5,7 +5,7 @@
 [![Docker](https://img.shields.io/badge/docker-ready-brightgreen.svg)](https://www.docker.com/)
 [![Kubernetes](https://img.shields.io/badge/kubernetes-native-326CE5.svg)](https://kubernetes.io/)
 
-> **A secure, production-ready Slack bot that connects your workspace to Kagent's Kubernetes AI agents using the A2A (Agent2Agent) protocol.**
+> **A secure Slack bot that connects your workspace to Kagent's Kubernetes AI agents using the A2A (Agent2Agent) protocol.**
 
 Ask questions about your Kubernetes cluster in natural language directly from Slack. Get instant insights, debug issues, and manage resources through conversational AI.
 
