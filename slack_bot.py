@@ -1,9 +1,10 @@
 """
-Kagent Slack Bot - A2A Protocol Integration
+Kagent Slack Bot - Phase 3: Map-Reduce Orchestrator
 
-A secure Slack bot that connects your workspace to Kagent's Kubernetes AI agents.
-It uses a lightweight local Ollama model (Llama 3.2 1B) for routing, 
-and Python-based Context Injection to handle multi-cluster comparisons safely.
+A robust "Plan & Execute" bot.
+1. PLAN: Breaks complex user queries into simple "Fetch" tasks for each cluster.
+2. EXECUTE: Agents do the heavy lifting (retrieving data).
+3. SYNTHESIZE: Local Brain compares the results and generates the final answer.
 
 License: MIT
 """
@@ -11,7 +12,6 @@ import os
 import json
 import logging
 import hashlib
-import re  # NEW: For robust string replacement
 from typing import Optional, Dict, List, Any
 import requests
 from sseclient import SSEClient
@@ -27,44 +27,47 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Reduce noise from libraries
+# Reduce noise
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('slack_bolt').setLevel(logging.INFO)
 
 load_dotenv()
 
-# --- LOCAL BRAIN (ROUTER ONLY) ---
+# --- LOCAL BRAIN (ORCHESTRATOR & SYNTHESIZER) ---
 class LocalBrain:
     def __init__(self, model='llama3.2:1b'):
         self.model = model
 
-    def identify_clusters(self, user_message: str, available_clusters: List[str]) -> List[str]:
+    def create_execution_plan(self, user_message: str, available_clusters: List[str]) -> List[Dict[str, str]]:
         """
-        ROUTER ONLY: Identifies which clusters are mentioned in the text.
-        Returns a list of cluster names.
+        MAP STEP: Breaks user request into isolated data-fetching tasks.
+        CRITICAL: Converts "Compare" requests into "List/Describe" requests.
         """
         cluster_list_str = ", ".join(available_clusters) if available_clusters else "none"
         
-        # Zero-Shot Prompt: No examples, just instructions.
-        # This prevents the 1B model from hallucinating example queries.
         system_prompt = f"""
-        You are a Router.
-        Valid Clusters: [{cluster_list_str}]
+        You are a Kubernetes Planner.
+        Available Clusters: [{cluster_list_str}]
 
-        Task:
-        1. Read the user input.
-        2. Return a JSON object containing a list of ANY Valid Clusters mentioned.
-        3. If no clusters are mentioned, return an empty list.
+        YOUR RULES:
+        1. If the user asks to COMPARE clusters, do NOT ask the agents to compare. 
+           Instead, create a task for EACH cluster to "List" or "Describe" the relevant resources.
+        2. The 'query' for the agent must rely ONLY on local data (use "this cluster").
         
-        Return JSON ONLY:
-        {{
-            "target_clusters": ["name1", "name2"]
+        EXAMPLE:
+        User: "Compare deployments in test and dev"
+        Output: {{
+            "tasks": [
+                {{"cluster": "test", "query": "List all deployments in this cluster and their status."}},
+                {{"cluster": "dev", "query": "List all deployments in this cluster and their status."}}
+            ]
         }}
+
+        Return JSON ONLY.
         """
 
         try:
-            logger.info(f"🧠 Routing with {self.model}...")
-            # Temperature 0.0 forces strict deterministic output
+            logger.info(f"🧠 Planning with {self.model}...")
             response = ollama.chat(
                 model=self.model,
                 format='json', 
@@ -75,31 +78,62 @@ class LocalBrain:
                 ]
             )
             
+            # Robust Parsing
             content = response['message']['content']
-            
-            # Robust JSON Parsing
             try:
                 data = json.loads(content)
             except json.JSONDecodeError:
-                # Fallback: try to find JSON blob if model chatted a bit
                 start = content.find('{')
                 end = content.rfind('}') + 1
-                if start != -1 and end != -1:
-                    data = json.loads(content[start:end])
-                else:
-                    data = {}
+                data = json.loads(content[start:end]) if start != -1 else {}
 
-            # Sanitize: Only allow clusters that actually exist in our config
-            found_clusters = [c for c in data.get("target_clusters", []) if c in available_clusters]
+            # Validation
+            valid_tasks = []
+            for task in data.get("tasks", []):
+                if task.get("cluster") in available_clusters:
+                    valid_tasks.append(task)
             
-            # Remove duplicates while preserving order
-            return list(dict.fromkeys(found_clusters))
+            return valid_tasks
             
         except Exception as e:
-            logger.error(f"🧠 Brain Error: {e}")
+            logger.error(f"🧠 Plan Error: {e}")
             return []
 
-# --- KAGENT CLIENT ---
+    def synthesize_results(self, user_query: str, results: Dict[str, str]) -> str:
+        """
+        REDUCE STEP: Takes the raw data from agents and generates the comparison.
+        """
+        # Prepare the context block
+        context_text = ""
+        for cluster, response in results.items():
+            context_text += f"--- DATA FROM CLUSTER '{cluster}' ---\n{response}\n\n"
+
+        system_prompt = f"""
+        You are a Senior Site Reliability Engineer.
+        The user asked: "{user_query}"
+        
+        I have collected data from the relevant clusters. 
+        Your job is to read the data below and answer the user's question directly.
+        
+        If the user asked to COMPARE, explicitly highlight the differences (versions, counts, status).
+        Keep it concise and professional.
+        """
+
+        try:
+            logger.info(f"🧠 Synthesizing with {self.model}...")
+            response = ollama.chat(
+                model=self.model,
+                messages=[
+                    {'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': context_text},
+                ]
+            )
+            return response['message']['content']
+        except Exception as e:
+            logger.error(f"🧠 Synthesis Error: {e}")
+            return "I failed to synthesize the results."
+
+# --- KAGENT CLIENT (unchanged) ---
 class KagentClient:
     def __init__(self, base_url: Optional[str] = None, namespace: Optional[str] = None,
                  agent_name: Optional[str] = None, multi_cluster: bool = False,
@@ -107,7 +141,6 @@ class KagentClient:
                  default_cluster: Optional[str] = None):
         
         self.multi_cluster = multi_cluster
-
         if multi_cluster:
             self.cluster_endpoints = cluster_endpoints or {}
             self.clusters = list(cluster_endpoints.keys()) if cluster_endpoints else []
@@ -124,60 +157,41 @@ class KagentClient:
 
     def _get_endpoint(self, cluster: Optional[str] = None) -> str:
         if self.multi_cluster:
-            target_cluster = cluster or self.default_cluster
-            return self.cluster_endpoints.get(target_cluster, "")
-        else:
-            return self.endpoint
+            target = cluster or self.default_cluster
+            return self.cluster_endpoints.get(target, "")
+        return self.endpoint
     
     def send_message(self, text: str, thread_id: Optional[str] = None, cluster: Optional[str] = None) -> Dict:
-        """Send message to Kagent and extract response from SSE stream"""
-        
         if self.multi_cluster:
-            target_cluster = cluster or self.default_cluster
-            endpoint = self._get_endpoint(target_cluster)
+            target = cluster or self.default_cluster
+            endpoint = self._get_endpoint(target)
         else:
-            target_cluster = None
+            target = None
             endpoint = self.endpoint
 
         if not endpoint:
-             return {'response': f"Config Error: No endpoint for '{cluster}'", 'status': 'error', 'contextId': None}
+             return {'response': f"Config Error: No endpoint for '{cluster}'", 'status': 'error'}
 
-        logger.info(f"📤 Sending to {target_cluster or 'default'} (Thread: {thread_id})")
-
+        logger.info(f"📤 Sending to {target}: {text[:50]}...")
         msg_hash = hashlib.sha256(f"{text}{thread_id}".encode()).hexdigest()[:16]
+        
         payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "message/stream",
-            "params": {
-                "message": {
-                    "role": "user",
-                    "parts": [{"kind": "text", "text": text}],
-                    "messageId": f"msg-{msg_hash}"
-                }
-            }
+            "jsonrpc": "2.0", "id": 1, "method": "message/stream",
+            "params": {"message": {"role": "user", "parts": [{"kind": "text", "text": text}], "messageId": f"msg-{msg_hash}"}}
         }
 
         # Context Management
         context_id = None
         if thread_id:
-            if self.multi_cluster:
-                if thread_id in self.thread_contexts and target_cluster in self.thread_contexts[thread_id]:
-                    context_id = self.thread_contexts[thread_id][target_cluster]
-            else:
-                if thread_id in self.thread_contexts:
-                    context_id = self.thread_contexts[thread_id]
+             if self.multi_cluster and target:
+                 if thread_id in self.thread_contexts and target in self.thread_contexts[thread_id]:
+                     context_id = self.thread_contexts[thread_id][target]
+             elif thread_id in self.thread_contexts:
+                 context_id = self.thread_contexts[thread_id]
 
-        if context_id:
-            payload["params"]["message"]["contextId"] = context_id
+        if context_id: payload["params"]["message"]["contextId"] = context_id
         
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-            "User-Agent": "kagent-slack-bot/1.0.0"
-        }
-
-        # Cloudflare Access support
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream", "User-Agent": "kagent-slack-bot/1.0"}
         if os.environ.get("CF_ACCESS_CLIENT_ID"):
             headers["CF-Access-Client-Id"] = os.environ.get("CF_ACCESS_CLIENT_ID")
             headers["CF-Access-Client-Secret"] = os.environ.get("CF_ACCESS_CLIENT_SECRET")
@@ -185,182 +199,112 @@ class KagentClient:
         try:
             response = requests.post(endpoint, json=payload, headers=headers, stream=True, timeout=300, verify=True)
             response.raise_for_status()
-            return self._parse_stream(response, thread_id, target_cluster)
-            
-        except requests.exceptions.Timeout:
-            return {'response': "Request timed out.", 'status': 'timeout', 'contextId': None}
-        except requests.exceptions.RequestException as e:
-            return {'response': f"Connection failed: {str(e)}", 'status': 'error', 'contextId': None}
+            return self._parse_stream(response, thread_id, target)
+        except Exception as e:
+            return {'response': f"Connection failed: {str(e)}", 'status': 'error'}
 
     def _parse_stream(self, response, thread_id: Optional[str], cluster: Optional[str] = None) -> Dict:
         client = SSEClient(response)
-        agent_response = None
-        context_id = None
+        agent_resp = None
+        ctx_id = None
         status = "unknown"
 
         for event in client.events():
-            if not event.data or not event.data.strip(): continue
+            if not event.data.strip(): continue
             try:
-                json_rpc = json.loads(event.data)
-                if 'error' in json_rpc:
-                    return {'response': f"Agent error: {json_rpc['error'].get('message')}", 'status': 'error'}
-
-                event_data = json_rpc.get('result', {})
-                if not event_data: continue
-
-                if 'contextId' in event_data:
-                    context_id = event_data['contextId']
+                rpc = json.loads(event.data)
+                if 'error' in rpc: return {'response': f"Error: {rpc['error'].get('message')}", 'status': 'error'}
+                
+                res = rpc.get('result', {})
+                if 'contextId' in res: 
+                    ctx_id = res['contextId']
                     if thread_id:
                         if self.multi_cluster and cluster:
                             if thread_id not in self.thread_contexts: self.thread_contexts[thread_id] = {}
-                            self.thread_contexts[thread_id][cluster] = context_id
-                        else:
-                            self.thread_contexts[thread_id] = context_id
+                            self.thread_contexts[thread_id][cluster] = ctx_id
+                        else: self.thread_contexts[thread_id] = ctx_id
                 
-                if 'status' in event_data:
-                    status = event_data['status'].get('state', status)
-                    if 'message' in event_data['status']:
-                        msg = event_data['status']['message']
-                        if msg.get('role') == 'agent' and msg.get('parts'):
-                            agent_response = msg['parts'][0].get('text', '')
+                if 'message' in res.get('status', {}):
+                    msg = res['status']['message']
+                    if msg.get('role') == 'agent' and msg.get('parts'):
+                        agent_resp = msg['parts'][0].get('text', '')
                 
-                if event_data.get('final'): break
-            except Exception:
-                continue
+                if res.get('final'): break
+            except: continue
+        return {'response': agent_resp, 'status': status}
 
-        return {'response': agent_response, 'status': status, 'contextId': context_id}
-
-# --- SETUP & CONFIGURATION ---
+# --- SETUP ---
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
-
-# Multi-cluster Config
 ENABLE_MULTI_CLUSTER = os.environ.get("ENABLE_MULTI_CLUSTER", "false").lower() in ("true", "1", "yes")
 KAGENT_CLUSTERS = []
 CLUSTER_ENDPOINTS = {}
 KAGENT_DEFAULT_CLUSTER = None
-KAGENT_BASE_URL = os.environ.get("KAGENT_BASE_URL")
-KAGENT_NAMESPACE = os.environ.get("KAGENT_NAMESPACE")
 
 if ENABLE_MULTI_CLUSTER:
     KAGENT_CLUSTERS = [c.strip() for c in os.environ.get("KAGENT_CLUSTERS", "").split(",") if c.strip()]
     KAGENT_DEFAULT_CLUSTER = os.environ.get("KAGENT_DEFAULT_CLUSTER", KAGENT_CLUSTERS[0] if KAGENT_CLUSTERS else None)
     pattern = os.environ.get("KAGENT_AGENT_PATTERN")
-    
     if pattern:
         for c in KAGENT_CLUSTERS:
-            c_base = os.environ.get(f"KAGENT_{c.upper()}_BASE_URL", KAGENT_BASE_URL)
+            base = os.environ.get(f"KAGENT_{c.upper()}_BASE_URL", os.environ.get("KAGENT_BASE_URL"))
             agent = pattern.replace("{cluster}", c)
-            CLUSTER_ENDPOINTS[c] = f"{c_base}/api/a2a/{KAGENT_NAMESPACE}/{agent}/"
+            CLUSTER_ENDPOINTS[c] = f"{base}/api/a2a/{os.environ.get('KAGENT_NAMESPACE')}/{agent}/"
     else:
         for c in KAGENT_CLUSTERS:
             url = os.environ.get(f"KAGENT_{c.upper()}_URL")
             if url: CLUSTER_ENDPOINTS[c] = url
 
-if not SLACK_BOT_TOKEN or not SLACK_APP_TOKEN:
-    logger.error("❌ Missing SLACK tokens")
-    exit(1)
-
 app = App(token=SLACK_BOT_TOKEN)
-# Initialize Brain
 local_brain = LocalBrain(model='llama3.2:1b')
+kagent = KagentClient(multi_cluster=True, cluster_endpoints=CLUSTER_ENDPOINTS, default_cluster=KAGENT_DEFAULT_CLUSTER) if ENABLE_MULTI_CLUSTER else KagentClient(base_url=os.environ.get("KAGENT_BASE_URL"), namespace=os.environ.get("KAGENT_NAMESPACE"), agent_name=os.environ.get("KAGENT_AGENT_NAME"))
 
-if ENABLE_MULTI_CLUSTER:
-    kagent = KagentClient(multi_cluster=True, cluster_endpoints=CLUSTER_ENDPOINTS, default_cluster=KAGENT_DEFAULT_CLUSTER)
-else:
-    agent_name = os.environ.get("KAGENT_AGENT_NAME")
-    if not KAGENT_BASE_URL and os.environ.get("KAGENT_A2A_URL"):
-         KAGENT_A2A_URL = os.environ.get("KAGENT_A2A_URL")
-         KAGENT_BASE_URL = KAGENT_A2A_URL.split("/api/a2a/")[0]
-         path_parts = KAGENT_A2A_URL.split("/api/a2a/")[1].rstrip("/").split("/")
-         KAGENT_NAMESPACE = path_parts[0]
-         agent_name = path_parts[1]
+logger.info("✅ System initialized (Mode: MAP-REDUCE)")
 
-    kagent = KagentClient(base_url=KAGENT_BASE_URL, namespace=KAGENT_NAMESPACE, agent_name=agent_name)
-
-logger.info("✅ System initialized (Mode: ROUTER + CONTEXT INJECTION)")
-
-# --- SLACK HANDLERS ---
-
+# --- HANDLER ---
 @app.event("app_mention")
 def handle_mention(event, say, logger):
-    """Handle @kagent mentions"""
     thread_ts = event.get("thread_ts") or event.get("ts")
     user_message = event["text"].split(">", 1)[-1].strip()
-    
-    if not user_message:
-        say("Please provide a message!", thread_ts=thread_ts)
-        return
+    if not user_message: return
 
-    # 1. BRAIN ANALYSIS (Routing Only)
+    # 1. PLAN (Map Phase)
     avail_clusters = KAGENT_CLUSTERS if ENABLE_MULTI_CLUSTER else []
-    target_clusters = local_brain.identify_clusters(user_message, avail_clusters)
+    plan = local_brain.create_execution_plan(user_message, avail_clusters)
     
-    # Fallback to default if no specific cluster mentioned
-    if not target_clusters:
-        target_clusters = [None] 
+    if not plan: plan = [{'cluster': None, 'query': user_message}]
 
-    results = []
-
-    # 2. EXECUTION LOOP
-    for cluster in target_clusters:
-        cluster_name = cluster if cluster else (KAGENT_DEFAULT_CLUSTER if ENABLE_MULTI_CLUSTER else "Default")
+    # Store results for synthesis
+    collected_results = {}
+    
+    # 2. EXECUTE (Agents do heavy lifting)
+    for task in plan:
+        cluster = task.get('cluster')
+        query = task.get('query')
+        cluster_name = cluster or "Default"
         
-        # Only notify if comparing multiple clusters
-        if len(target_clusters) > 1:
-            say(f"🔄 Querying: *{cluster_name}*...", thread_ts=thread_ts)
-
-        # --- CONTEXT INJECTION & LOCALIZATION (THE FIX) ---
-        if len(target_clusters) > 1:
-            # Step A: Identify other clusters to ignore
-            other_clusters = [c for c in target_clusters if c != cluster]
-            other_clusters_str = ", ".join(other_clusters)
-            
-            # Step B: DYNAMIC REWRITE
-            # We use Python Regex to replace the *current* cluster name with "this cluster"
-            # This makes the query generic so the specific agent understands it.
-            # "Compare test and dev" -> sent to Test agent as -> "Compare this cluster and dev"
-            pattern = re.compile(r'\b' + re.escape(cluster) + r'\b', re.IGNORECASE)
-            localized_message = pattern.sub("this cluster", user_message)
-            
-            # Step C: CONTEXT WRAPPER
-            prompt_to_send = (
-                f"SYSTEM INSTRUCTION: You are the '{cluster_name}' Kubernetes cluster. "
-                f"The user is asking a multi-cluster question. "
-                f"I have rewritten the query so 'this cluster' refers to YOU.\n"
-                f"Ignore any references to: [{other_clusters_str}].\n\n"
-                f"USER QUERY: {localized_message}"
-            )
-        else:
-            # Single cluster: Send raw message to avoid confusing the agent
-            prompt_to_send = user_message
-        # --------------------------------------------------
+        if len(plan) > 1:
+            say(f"🔄 fetching data from *{cluster_name}*...", thread_ts=thread_ts)
 
         try:
-            result = kagent.send_message(prompt_to_send, thread_id=thread_ts, cluster=cluster)
-            
-            if result['status'] == 'completed' and result['response']:
-                resp = result['response']
-                if len(target_clusters) > 1:
-                    results.append(f"🏗️ *Cluster: {cluster_name}*\n{resp}")
-                else:
-                    results.append(resp)
+            result = kagent.send_message(query, thread_id=thread_ts, cluster=cluster)
+            if result['response']:
+                collected_results[cluster_name] = result['response']
             else:
-                 results.append(f"⚠️ *{cluster_name}*: {result.get('response', 'No response')}")
-
+                collected_results[cluster_name] = "No data returned."
         except Exception as e:
-            logger.error(f"❌ Error in loop: {e}")
-            results.append(f"❌ Failed to query {cluster_name}")
+            collected_results[cluster_name] = f"Error: {e}"
 
-    # 3. SEND FINAL RESPONSE
-    final_output = "\n\n---\n\n".join(results)
-    say(final_output, thread_ts=thread_ts)
-
-@app.event("message")
-def handle_message_events(body, logger):
-    pass 
+    # 3. SYNTHESIZE (Reduce Phase)
+    if len(collected_results) > 1:
+        say("🧠 Analyzing and comparing results...", thread_ts=thread_ts)
+        final_answer = local_brain.synthesize_results(user_message, collected_results)
+        say(final_answer, thread_ts=thread_ts)
+    else:
+        # If only one cluster was queried, just show the result directly
+        single_key = list(collected_results.keys())[0]
+        say(collected_results[single_key], thread_ts=thread_ts)
 
 if __name__ == "__main__":
-    logger.info(f"🎬 Starting Bot with {local_brain.model}...")
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()
