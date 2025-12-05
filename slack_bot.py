@@ -1,10 +1,9 @@
 """
-Kagent Slack Bot - Phase 3: Map-Reduce Orchestrator
+Kagent Slack Bot - Map-Reduce with Compact Data Strategy
 
-A robust "Plan & Execute" bot.
-1. PLAN: Breaks complex user queries into simple "Fetch" tasks for each cluster.
-2. EXECUTE: Agents do the heavy lifting (retrieving data).
-3. SYNTHESIZE: Local Brain compares the results and generates the final answer.
+A robust bot that handles large cluster data on small local models (1B).
+1. MAP: Asks Agents for "Compact Data" (stripping fluff to save context window).
+2. REDUCE: Local Brain compares the compact lists strictly.
 
 License: MIT
 """
@@ -26,22 +25,20 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Reduce noise
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('slack_bolt').setLevel(logging.INFO)
 
 load_dotenv()
 
-# --- LOCAL BRAIN (ORCHESTRATOR & SYNTHESIZER) ---
+# --- LOCAL BRAIN (Compact Orchestrator) ---
 class LocalBrain:
     def __init__(self, model='llama3.2:1b'):
         self.model = model
 
     def create_execution_plan(self, user_message: str, available_clusters: List[str]) -> List[Dict[str, str]]:
         """
-        MAP STEP: Breaks user request into isolated data-fetching tasks.
-        CRITICAL: Converts "Compare" requests into "List/Describe" requests.
+        MAP STEP: Generates tasks. 
+        CRITICAL: Asks for COMPACT data to prevent overwhelming the 1B model.
         """
         cluster_list_str = ", ".join(available_clusters) if available_clusters else "none"
         
@@ -50,16 +47,15 @@ class LocalBrain:
         Available Clusters: [{cluster_list_str}]
 
         YOUR RULES:
-        1. If the user asks to COMPARE clusters, do NOT ask the agents to compare. 
-           Instead, create a task for EACH cluster to "List" or "Describe" the relevant resources.
-        2. The 'query' for the agent must rely ONLY on local data (use "this cluster").
+        1. Identify which clusters need to be queried.
+        2. Create a "List" query for each cluster.
+        3. CRITICAL: Instruct the agent to be BRIEF and use a COMPACT list format.
         
-        EXAMPLE:
-        User: "Compare deployments in test and dev"
-        Output: {{
+        EXAMPLE OUTPUT:
+        {{
             "tasks": [
-                {{"cluster": "test", "query": "List all deployments in this cluster and their status."}},
-                {{"cluster": "dev", "query": "List all deployments in this cluster and their status."}}
+                {{"cluster": "test", "query": "List all deployments in this cluster. Format as: 'Namespace :: DeploymentName :: Image'. Do not add descriptions."}},
+                {{"cluster": "dev", "query": "List all deployments in this cluster. Format as: 'Namespace :: DeploymentName :: Image'. Do not add descriptions."}}
             ]
         }}
 
@@ -78,7 +74,7 @@ class LocalBrain:
                 ]
             )
             
-            # Robust Parsing
+            # Robust JSON parsing
             content = response['message']['content']
             try:
                 data = json.loads(content)
@@ -87,7 +83,6 @@ class LocalBrain:
                 end = content.rfind('}') + 1
                 data = json.loads(content[start:end]) if start != -1 else {}
 
-            # Validation
             valid_tasks = []
             for task in data.get("tasks", []):
                 if task.get("cluster") in available_clusters:
@@ -101,28 +96,32 @@ class LocalBrain:
 
     def synthesize_results(self, user_query: str, results: Dict[str, str]) -> str:
         """
-        REDUCE STEP: Takes the raw data from agents and generates the comparison.
+        REDUCE STEP: Compares compact lists.
         """
-        # Prepare the context block
         context_text = ""
         for cluster, response in results.items():
-            context_text += f"--- DATA FROM CLUSTER '{cluster}' ---\n{response}\n\n"
+            context_text += f"=== DATA FROM CLUSTER '{cluster}' ===\n{response}\n\n"
 
         system_prompt = f"""
-        You are a Senior Site Reliability Engineer.
-        The user asked: "{user_query}"
+        You are a Kubernetes Auditor.
+        User Question: "{user_query}"
         
-        I have collected data from the relevant clusters. 
-        Your job is to read the data below and answer the user's question directly.
-        
-        If the user asked to COMPARE, explicitly highlight the differences (versions, counts, status).
-        Keep it concise and professional.
+        Task:
+        1. Read the data from the clusters below.
+        2. Compare the deployments namespace by namespace.
+        3. List EVERY namespace found. Do not skip any.
+        4. Highlight differences (e.g. "Namespace X exists in Dev but not Test").
+
+        Keep the final output structured and concise.
         """
 
         try:
             logger.info(f"🧠 Synthesizing with {self.model}...")
+            # We allow a slightly higher temperature for synthesis to make it flow better, 
+            # but keep it low for accuracy.
             response = ollama.chat(
                 model=self.model,
+                options={'temperature': 0.1}, 
                 messages=[
                     {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': context_text},
@@ -131,9 +130,9 @@ class LocalBrain:
             return response['message']['content']
         except Exception as e:
             logger.error(f"🧠 Synthesis Error: {e}")
-            return "I failed to synthesize the results."
+            return "⚠️ I couldn't synthesize the results (data too large). See raw logs below."
 
-# --- KAGENT CLIENT (unchanged) ---
+# --- KAGENT CLIENT (Standard) ---
 class KagentClient:
     def __init__(self, base_url: Optional[str] = None, namespace: Optional[str] = None,
                  agent_name: Optional[str] = None, multi_cluster: bool = False,
@@ -257,9 +256,12 @@ if ENABLE_MULTI_CLUSTER:
 
 app = App(token=SLACK_BOT_TOKEN)
 local_brain = LocalBrain(model='llama3.2:1b')
-kagent = KagentClient(multi_cluster=True, cluster_endpoints=CLUSTER_ENDPOINTS, default_cluster=KAGENT_DEFAULT_CLUSTER) if ENABLE_MULTI_CLUSTER else KagentClient(base_url=os.environ.get("KAGENT_BASE_URL"), namespace=os.environ.get("KAGENT_NAMESPACE"), agent_name=os.environ.get("KAGENT_AGENT_NAME"))
+if ENABLE_MULTI_CLUSTER:
+    kagent = KagentClient(multi_cluster=True, cluster_endpoints=CLUSTER_ENDPOINTS, default_cluster=KAGENT_DEFAULT_CLUSTER)
+else:
+    kagent = KagentClient(base_url=os.environ.get("KAGENT_BASE_URL"), namespace=os.environ.get("KAGENT_NAMESPACE"), agent_name=os.environ.get("KAGENT_AGENT_NAME"))
 
-logger.info("✅ System initialized (Mode: MAP-REDUCE)")
+logger.info("✅ System initialized (Mode: MAP-REDUCE COMPACT)")
 
 # --- HANDLER ---
 @app.event("app_mention")
@@ -271,10 +273,8 @@ def handle_mention(event, say, logger):
     # 1. PLAN (Map Phase)
     avail_clusters = KAGENT_CLUSTERS if ENABLE_MULTI_CLUSTER else []
     plan = local_brain.create_execution_plan(user_message, avail_clusters)
-    
     if not plan: plan = [{'cluster': None, 'query': user_message}]
 
-    # Store results for synthesis
     collected_results = {}
     
     # 2. EXECUTE (Agents do heavy lifting)
@@ -284,7 +284,7 @@ def handle_mention(event, say, logger):
         cluster_name = cluster or "Default"
         
         if len(plan) > 1:
-            say(f"🔄 fetching data from *{cluster_name}*...", thread_ts=thread_ts)
+            say(f"🔄 fetching from *{cluster_name}*...", thread_ts=thread_ts)
 
         try:
             result = kagent.send_message(query, thread_id=thread_ts, cluster=cluster)
@@ -297,11 +297,18 @@ def handle_mention(event, say, logger):
 
     # 3. SYNTHESIZE (Reduce Phase)
     if len(collected_results) > 1:
-        say("🧠 Analyzing and comparing results...", thread_ts=thread_ts)
+        say("🧠 Analyzing...", thread_ts=thread_ts)
         final_answer = local_brain.synthesize_results(user_message, collected_results)
-        say(final_answer, thread_ts=thread_ts)
+        
+        # SAFETY CHECK: If the 1B model fails to produce a good summary, dump the raw data partially
+        if "I couldn't synthesize" in final_answer or len(final_answer) < 50:
+             say("⚠️ The data was too large to summarize perfectly. Here is the raw comparison:", thread_ts=thread_ts)
+             for c, data in collected_results.items():
+                 # Send as code block for better formatting
+                 say(f"*{c}*:\n```{data[:1500]}```\n(truncated if too long)", thread_ts=thread_ts)
+        else:
+             say(final_answer, thread_ts=thread_ts)
     else:
-        # If only one cluster was queried, just show the result directly
         single_key = list(collected_results.keys())[0]
         say(collected_results[single_key], thread_ts=thread_ts)
 
