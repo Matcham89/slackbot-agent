@@ -1,14 +1,9 @@
 """
-Kagent Slack Bot - A2A Protocol Integration with Local 1B Brain
+Kagent Slack Bot - A2A Protocol Integration
 
 A secure Slack bot that connects your workspace to Kagent's Kubernetes AI agents.
-It uses a local Ollama model (Llama 3.2 1B) as an ORCHESTRATOR to plan
-tasks across multiple clusters.
-
-Features:
-- "Plan & Execute" Architecture
-- Ollama decides WHICH cluster to query and EXACTLY WHAT to ask.
-- Solves the "context confusion" by generating specific queries per cluster.
+It uses a lightweight local Ollama model (Llama 3.2 1B) for routing, 
+and Python-based Context Injection to handle multi-cluster comparisons safely.
 
 License: MIT
 """
@@ -16,6 +11,7 @@ import os
 import json
 import logging
 import hashlib
+import re  # NEW: For robust string replacement
 from typing import Optional, Dict, List, Any
 import requests
 from sseclient import SSEClient
@@ -31,55 +27,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Reduce noise
+# Reduce noise from libraries
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('slack_bolt').setLevel(logging.INFO)
 
 load_dotenv()
 
-# --- LOCAL BRAIN (ORCHESTRATOR MODE) ---
+# --- LOCAL BRAIN (ROUTER ONLY) ---
 class LocalBrain:
     def __init__(self, model='llama3.2:1b'):
         self.model = model
 
-    def create_execution_plan(self, user_message: str, available_clusters: List[str]) -> List[Dict[str, str]]:
+    def identify_clusters(self, user_message: str, available_clusters: List[str]) -> List[str]:
         """
-        Analyzes the user request and breaks it down into specific tasks per cluster.
-        Returns a list of dicts: [{'cluster': 'dev', 'query': '...'}, ...]
+        ROUTER ONLY: Identifies which clusters are mentioned in the text.
+        Returns a list of cluster names.
         """
         cluster_list_str = ", ".join(available_clusters) if available_clusters else "none"
         
+        # Zero-Shot Prompt: No examples, just instructions.
+        # This prevents the 1B model from hallucinating example queries.
         system_prompt = f"""
-        You are a Kubernetes Orchestrator.
-        Available Clusters: [{cluster_list_str}]
+        You are a Router.
+        Valid Clusters: [{cluster_list_str}]
 
-        YOUR JOB:
-        1. Analyze the user's request.
-        2. Break it down into specific queries for the relevant clusters.
-        3. REWRITE the query for the specific cluster so it understands the context is local (use "this cluster").
+        Task:
+        1. Read the user input.
+        2. Return a JSON object containing a list of ANY Valid Clusters mentioned.
+        3. If no clusters are mentioned, return an empty list.
         
-        EXAMPLE 1:
-        User: "Compare namespaces in dev and prod"
-        Output: {{
-            "tasks": [
-                {{"cluster": "dev", "query": "Count the total number of namespaces in this cluster."}},
-                {{"cluster": "prod", "query": "Count the total number of namespaces in this cluster."}}
-            ]
+        Return JSON ONLY:
+        {{
+            "target_clusters": ["name1", "name2"]
         }}
-
-        EXAMPLE 2:
-        User: "Why is the payment pod crashing in test?"
-        Output: {{
-            "tasks": [
-                {{"cluster": "test", "query": "Check logs and events for the 'payment' pod in this cluster and explain why it is crashing."}}
-            ]
-        }}
-
-        Return JSON ONLY.
         """
 
         try:
-            logger.info(f"🧠 Orchestrating with {self.model}...")
+            logger.info(f"🧠 Routing with {self.model}...")
+            # Temperature 0.0 forces strict deterministic output
             response = ollama.chat(
                 model=self.model,
                 format='json', 
@@ -92,10 +77,11 @@ class LocalBrain:
             
             content = response['message']['content']
             
-            # JSON Parsing
+            # Robust JSON Parsing
             try:
                 data = json.loads(content)
             except json.JSONDecodeError:
+                # Fallback: try to find JSON blob if model chatted a bit
                 start = content.find('{')
                 end = content.rfind('}') + 1
                 if start != -1 and end != -1:
@@ -103,13 +89,11 @@ class LocalBrain:
                 else:
                     data = {}
 
-            # Validation: Filter out tasks for clusters that don't exist
-            valid_tasks = []
-            for task in data.get("tasks", []):
-                if task.get("cluster") in available_clusters:
-                    valid_tasks.append(task)
+            # Sanitize: Only allow clusters that actually exist in our config
+            found_clusters = [c for c in data.get("target_clusters", []) if c in available_clusters]
             
-            return valid_tasks
+            # Remove duplicates while preserving order
+            return list(dict.fromkeys(found_clusters))
             
         except Exception as e:
             logger.error(f"🧠 Brain Error: {e}")
@@ -158,7 +142,7 @@ class KagentClient:
         if not endpoint:
              return {'response': f"Config Error: No endpoint for '{cluster}'", 'status': 'error', 'contextId': None}
 
-        logger.info(f"📤 Sending to {target_cluster or 'default'}: {text[:50]}...")
+        logger.info(f"📤 Sending to {target_cluster or 'default'} (Thread: {thread_id})")
 
         msg_hash = hashlib.sha256(f"{text}{thread_id}".encode()).hexdigest()[:16]
         payload = {
@@ -193,6 +177,7 @@ class KagentClient:
             "User-Agent": "kagent-slack-bot/1.0.0"
         }
 
+        # Cloudflare Access support
         if os.environ.get("CF_ACCESS_CLIENT_ID"):
             headers["CF-Access-Client-Id"] = os.environ.get("CF_ACCESS_CLIENT_ID")
             headers["CF-Access-Client-Secret"] = os.environ.get("CF_ACCESS_CLIENT_SECRET")
@@ -264,7 +249,6 @@ if ENABLE_MULTI_CLUSTER:
     
     if pattern:
         for c in KAGENT_CLUSTERS:
-            # Check for cluster-specific URL, fallback to global base URL
             c_base = os.environ.get(f"KAGENT_{c.upper()}_BASE_URL", KAGENT_BASE_URL)
             agent = pattern.replace("{cluster}", c)
             CLUSTER_ENDPOINTS[c] = f"{c_base}/api/a2a/{KAGENT_NAMESPACE}/{agent}/"
@@ -294,7 +278,7 @@ else:
 
     kagent = KagentClient(base_url=KAGENT_BASE_URL, namespace=KAGENT_NAMESPACE, agent_name=agent_name)
 
-logger.info("✅ System initialized (Mode: ORCHESTRATOR)")
+logger.info("✅ System initialized (Mode: ROUTER + CONTEXT INJECTION)")
 
 # --- SLACK HANDLERS ---
 
@@ -308,37 +292,56 @@ def handle_mention(event, say, logger):
         say("Please provide a message!", thread_ts=thread_ts)
         return
 
-    # 1. BRAIN ANALYSIS (PLANNING)
+    # 1. BRAIN ANALYSIS (Routing Only)
     avail_clusters = KAGENT_CLUSTERS if ENABLE_MULTI_CLUSTER else []
+    target_clusters = local_brain.identify_clusters(user_message, avail_clusters)
     
-    # Brain returns a list of specific tasks: [{'cluster': 'dev', 'query': '...'}, ...]
-    plan = local_brain.create_execution_plan(user_message, avail_clusters)
-    
-    # Fallback to default if brain returns nothing (e.g. general chat)
-    if not plan:
-        # If no explicit plan, send original query to default cluster
-        plan = [{'cluster': None, 'query': user_message}]
+    # Fallback to default if no specific cluster mentioned
+    if not target_clusters:
+        target_clusters = [None] 
 
     results = []
 
     # 2. EXECUTION LOOP
-    for task in plan:
-        cluster = task.get('cluster')
-        specific_query = task.get('query')
-        
+    for cluster in target_clusters:
         cluster_name = cluster if cluster else (KAGENT_DEFAULT_CLUSTER if ENABLE_MULTI_CLUSTER else "Default")
         
         # Only notify if comparing multiple clusters
-        if len(plan) > 1:
-            say(f"🔄 Asking *{cluster_name}*: _{specific_query}_", thread_ts=thread_ts)
+        if len(target_clusters) > 1:
+            say(f"🔄 Querying: *{cluster_name}*...", thread_ts=thread_ts)
+
+        # --- CONTEXT INJECTION & LOCALIZATION (THE FIX) ---
+        if len(target_clusters) > 1:
+            # Step A: Identify other clusters to ignore
+            other_clusters = [c for c in target_clusters if c != cluster]
+            other_clusters_str = ", ".join(other_clusters)
+            
+            # Step B: DYNAMIC REWRITE
+            # We use Python Regex to replace the *current* cluster name with "this cluster"
+            # This makes the query generic so the specific agent understands it.
+            # "Compare test and dev" -> sent to Test agent as -> "Compare this cluster and dev"
+            pattern = re.compile(r'\b' + re.escape(cluster) + r'\b', re.IGNORECASE)
+            localized_message = pattern.sub("this cluster", user_message)
+            
+            # Step C: CONTEXT WRAPPER
+            prompt_to_send = (
+                f"SYSTEM INSTRUCTION: You are the '{cluster_name}' Kubernetes cluster. "
+                f"The user is asking a multi-cluster question. "
+                f"I have rewritten the query so 'this cluster' refers to YOU.\n"
+                f"Ignore any references to: [{other_clusters_str}].\n\n"
+                f"USER QUERY: {localized_message}"
+            )
+        else:
+            # Single cluster: Send raw message to avoid confusing the agent
+            prompt_to_send = user_message
+        # --------------------------------------------------
 
         try:
-            # Send the BRAIN-GENERATED query, not the user's original message
-            result = kagent.send_message(specific_query, thread_id=thread_ts, cluster=cluster)
+            result = kagent.send_message(prompt_to_send, thread_id=thread_ts, cluster=cluster)
             
             if result['status'] == 'completed' and result['response']:
                 resp = result['response']
-                if len(plan) > 1:
+                if len(target_clusters) > 1:
                     results.append(f"🏗️ *Cluster: {cluster_name}*\n{resp}")
                 else:
                     results.append(resp)
