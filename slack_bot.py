@@ -1,9 +1,12 @@
 """
-Kagent Slack Bot - Map-Reduce with Compact Data Strategy
+Kagent Slack Bot - Phase 4: Targeted Map-Reduce
 
-A robust bot that handles large cluster data on small local models (1B).
-1. MAP: Asks Agents for "Compact Data" (stripping fluff to save context window).
-2. REDUCE: Local Brain compares the compact lists strictly.
+A robust multi-cluster orchestrator optimized for local LLMs (Llama 3.2 1B).
+
+FEATURES:
+1. Targeted Planning: Distinguishes between "List All" and "Get Specific Resource" to reduce noise.
+2. Compact Fetching: Asks agents for brief data to save context window.
+3. Strict Synthesis: Compares only what was asked.
 
 License: MIT
 """
@@ -25,20 +28,22 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Reduce noise
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('slack_bolt').setLevel(logging.INFO)
 
 load_dotenv()
 
-# --- LOCAL BRAIN (Compact Orchestrator) ---
+# --- LOCAL BRAIN (TARGETED ORCHESTRATOR) ---
 class LocalBrain:
     def __init__(self, model='llama3.2:1b'):
         self.model = model
 
     def create_execution_plan(self, user_message: str, available_clusters: List[str]) -> List[Dict[str, str]]:
         """
-        MAP STEP: Generates tasks. 
-        CRITICAL: Asks for COMPACT data to prevent overwhelming the 1B model.
+        MAP STEP: Generates tasks.
+        LOGIC: Detects if the user wants a SPECIFIC resource or a LIST.
         """
         cluster_list_str = ", ".join(available_clusters) if available_clusters else "none"
         
@@ -48,14 +53,19 @@ class LocalBrain:
 
         YOUR RULES:
         1. Identify which clusters need to be queried.
-        2. Create a "List" query for each cluster.
-        3. CRITICAL: Instruct the agent to be BRIEF and use a COMPACT list format.
+        2. Analyze if the user is asking about a SPECIFIC resource name (e.g. "kagent-controller", "redis-pod") or ALL resources.
         
+        IF SPECIFIC NAME FOUND:
+           Query: "Get details for the deployment/pod named 'NAME' in this cluster. Format: Compact."
+        
+        IF GENERAL / "ALL":
+           Query: "List all deployments in this cluster. Format: Namespace :: Name :: Image."
+
         EXAMPLE OUTPUT:
         {{
             "tasks": [
-                {{"cluster": "test", "query": "List all deployments in this cluster. Format as: 'Namespace :: DeploymentName :: Image'. Do not add descriptions."}},
-                {{"cluster": "dev", "query": "List all deployments in this cluster. Format as: 'Namespace :: DeploymentName :: Image'. Do not add descriptions."}}
+                {{"cluster": "test", "query": "Get details for deployment 'kagent-controller' in this cluster. Format: Compact."}},
+                {{"cluster": "dev", "query": "Get details for deployment 'kagent-controller' in this cluster. Format: Compact."}}
             ]
         }}
 
@@ -74,7 +84,7 @@ class LocalBrain:
                 ]
             )
             
-            # Robust JSON parsing
+            # Robust Parsing
             content = response['message']['content']
             try:
                 data = json.loads(content)
@@ -96,7 +106,7 @@ class LocalBrain:
 
     def synthesize_results(self, user_query: str, results: Dict[str, str]) -> str:
         """
-        REDUCE STEP: Compares compact lists.
+        REDUCE STEP: Summarizes the specific data found.
         """
         context_text = ""
         for cluster, response in results.items():
@@ -107,18 +117,16 @@ class LocalBrain:
         User Question: "{user_query}"
         
         Task:
-        1. Read the data from the clusters below.
-        2. Compare the deployments namespace by namespace.
-        3. List EVERY namespace found. Do not skip any.
-        4. Highlight differences (e.g. "Namespace X exists in Dev but not Test").
+        1. Compare the data provided below.
+        2. Answer the user's question directly.
+        3. DO NOT mention resources that were not asked for.
+        4. If the versions/images are different, highlight that clearly.
 
-        Keep the final output structured and concise.
+        Keep it concise.
         """
 
         try:
             logger.info(f"🧠 Synthesizing with {self.model}...")
-            # We allow a slightly higher temperature for synthesis to make it flow better, 
-            # but keep it low for accuracy.
             response = ollama.chat(
                 model=self.model,
                 options={'temperature': 0.1}, 
@@ -130,7 +138,7 @@ class LocalBrain:
             return response['message']['content']
         except Exception as e:
             logger.error(f"🧠 Synthesis Error: {e}")
-            return "⚠️ I couldn't synthesize the results (data too large). See raw logs below."
+            return "⚠️ Error synthesizing results."
 
 # --- KAGENT CLIENT (Standard) ---
 class KagentClient:
@@ -261,7 +269,7 @@ if ENABLE_MULTI_CLUSTER:
 else:
     kagent = KagentClient(base_url=os.environ.get("KAGENT_BASE_URL"), namespace=os.environ.get("KAGENT_NAMESPACE"), agent_name=os.environ.get("KAGENT_AGENT_NAME"))
 
-logger.info("✅ System initialized (Mode: MAP-REDUCE COMPACT)")
+logger.info("✅ System initialized (Mode: TARGETED MAP-REDUCE)")
 
 # --- HANDLER ---
 @app.event("app_mention")
@@ -300,12 +308,10 @@ def handle_mention(event, say, logger):
         say("🧠 Analyzing...", thread_ts=thread_ts)
         final_answer = local_brain.synthesize_results(user_message, collected_results)
         
-        # SAFETY CHECK: If the 1B model fails to produce a good summary, dump the raw data partially
-        if "I couldn't synthesize" in final_answer or len(final_answer) < 50:
-             say("⚠️ The data was too large to summarize perfectly. Here is the raw comparison:", thread_ts=thread_ts)
+        if "I couldn't synthesize" in final_answer:
+             say("⚠️ Raw Comparison Data:", thread_ts=thread_ts)
              for c, data in collected_results.items():
-                 # Send as code block for better formatting
-                 say(f"*{c}*:\n```{data[:1500]}```\n(truncated if too long)", thread_ts=thread_ts)
+                 say(f"*{c}*:\n```{data[:1000]}```", thread_ts=thread_ts)
         else:
              say(final_answer, thread_ts=thread_ts)
     else:
