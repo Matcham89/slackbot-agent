@@ -2,12 +2,8 @@
 Kagent Slack Bot - A2A Protocol Integration with Local 1B Brain
 
 A secure Slack bot that connects your workspace to Kagent's Kubernetes AI agents.
-It uses a lightweight local Ollama model (Llama 3.2 1B) specifically for 
-ROUTING (detecting which cluster to talk to).
-
-*** UNRESTRICTED MODE ***
-- Security filters disabled.
-- Prompt rewriting disabled (sends raw user input to ensure accuracy).
+It uses a lightweight local Ollama model (Llama 3.2 1B) for intelligent routing
+and Context Injection to handle multi-cluster comparisons.
 
 License: MIT
 """
@@ -30,13 +26,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Reduce noise from libraries
+# Reduce noise from third-party libraries
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('slack_bolt').setLevel(logging.INFO)
 
 load_dotenv()
 
-# --- LOCAL BRAIN (ROUTER ONLY - NO REWRITING) ---
+# --- LOCAL BRAIN (ROUTER ONLY) ---
 class LocalBrain:
     def __init__(self, model='llama3.2:1b'):
         self.model = model
@@ -44,11 +40,11 @@ class LocalBrain:
     def analyze_intent(self, user_message: str, available_clusters: List[str]) -> List[str]:
         """
         ROUTER ONLY: Extracts cluster names. 
-        Returns a list of target clusters.
+        Returns a list of target clusters found in the user message.
         """
         cluster_list_str = ", ".join(available_clusters) if available_clusters else "none"
         
-        # CHANGED: Prompt focuses ONLY on extracting names. No prompt rewriting.
+        # Simplified prompt: Focus ONLY on extracting names.
         system_prompt = f"""
         You are a Router.
         Valid Clusters: [{cluster_list_str}]
@@ -65,7 +61,7 @@ class LocalBrain:
 
         try:
             logger.info(f"🧠 Routing with {self.model}...")
-            # Temperature 0 for maximum precision
+            # Temperature 0.0 forces the model to be deterministic (essential for JSON)
             response = ollama.chat(
                 model=self.model,
                 format='json', 
@@ -78,7 +74,7 @@ class LocalBrain:
             
             content = response['message']['content']
             
-            # 1B Model JSON Parsing Logic
+            # Robust 1B Model JSON Parsing
             try:
                 data = json.loads(content)
             except json.JSONDecodeError:
@@ -142,7 +138,7 @@ class KagentClient:
         if not endpoint:
              return {'response': f"Config Error: No endpoint for '{cluster}'", 'status': 'error', 'contextId': None}
 
-        # Truncate message in logs
+        # Truncate message in logs for cleanliness
         logger.info(f"📤 Sending to {target_cluster or 'default'} (Thread: {thread_id})")
 
         msg_hash = hashlib.sha256(f"{text}{thread_id}".encode()).hexdigest()[:16]
@@ -159,7 +155,7 @@ class KagentClient:
             }
         }
 
-        # Context Management
+        # Context Management (Thread continuity)
         context_id = None
         if thread_id:
             if self.multi_cluster:
@@ -178,6 +174,7 @@ class KagentClient:
             "User-Agent": "kagent-slack-bot/1.0.0"
         }
 
+        # Cloudflare Access support
         if os.environ.get("CF_ACCESS_CLIENT_ID"):
             headers["CF-Access-Client-Id"] = os.environ.get("CF_ACCESS_CLIENT_ID")
             headers["CF-Access-Client-Secret"] = os.environ.get("CF_ACCESS_CLIENT_SECRET")
@@ -263,7 +260,7 @@ if not SLACK_BOT_TOKEN or not SLACK_APP_TOKEN:
     exit(1)
 
 app = App(token=SLACK_BOT_TOKEN)
-# Init Brain with Lightweight Model
+# Initialize Brain with Lightweight Model
 local_brain = LocalBrain(model='llama3.2:1b')
 
 if ENABLE_MULTI_CLUSTER:
@@ -279,7 +276,7 @@ else:
 
     kagent = KagentClient(base_url=KAGENT_BASE_URL, namespace=KAGENT_NAMESPACE, agent_name=agent_name)
 
-logger.info("✅ System initialized (Security: UNRESTRICTED)")
+logger.info("✅ System initialized")
 
 # --- SLACK HANDLERS ---
 
@@ -294,7 +291,7 @@ def handle_mention(event, say, logger):
         return
 
     # 1. BRAIN ANALYSIS (Routing Only)
-    # We ask the brain only "Where does this go?"
+    # We only ask the brain "Where does this go?". We rely on Python for the logic.
     avail_clusters = KAGENT_CLUSTERS if ENABLE_MULTI_CLUSTER else []
     target_clusters = local_brain.analyze_intent(user_message, avail_clusters)
     
@@ -312,9 +309,27 @@ def handle_mention(event, say, logger):
         if len(target_clusters) > 1:
             say(f"🔄 Querying: *{cluster_name}*...", thread_ts=thread_ts)
 
+        # --- CONTEXT INJECTION (The Fix) ---
+        # If we are comparing clusters, we must wrap the message so the Agent knows WHO it is.
+        if len(target_clusters) > 1:
+            # We filter out the CURRENT cluster from the "ignore list"
+            other_clusters = [c for c in target_clusters if c != cluster]
+            other_clusters_str = ", ".join(other_clusters)
+            
+            prompt_to_send = (
+                f"SYSTEM CONTEXT: You are the '{cluster_name}' cluster. "
+                f"The user is asking to compare multiple clusters. "
+                f"Ignore references to other clusters (specifically: '{other_clusters_str}'). "
+                f"Report strictly on YOUR local status.\n\n"
+                f"USER QUERY: {user_message}"
+            )
+        else:
+            # Single cluster: Send raw message to avoid confusing the agent
+            prompt_to_send = user_message
+        # -----------------------------------
+
         try:
-            # FIX: We now send 'user_message' directly. The Brain is NOT rewriting it.
-            result = kagent.send_message(user_message, thread_id=thread_ts, cluster=cluster)
+            result = kagent.send_message(prompt_to_send, thread_id=thread_ts, cluster=cluster)
             
             if result['status'] == 'completed' and result['response']:
                 resp = result['response']
