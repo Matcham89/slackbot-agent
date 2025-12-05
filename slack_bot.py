@@ -2,11 +2,12 @@
 Kagent Slack Bot - A2A Protocol Integration with Local 1B Brain
 
 A secure Slack bot that connects your workspace to Kagent's Kubernetes AI agents.
-It uses a lightweight local Ollama model (Llama 3.2 1B) for routing commands
-to the correct cluster.
+It uses a lightweight local Ollama model (Llama 3.2 1B) specifically for 
+ROUTING (detecting which cluster to talk to).
 
 *** UNRESTRICTED MODE ***
-Security filters are disabled. All inputs are passed to the agent.
+- Security filters disabled.
+- Prompt rewriting disabled (sends raw user input to ensure accuracy).
 
 License: MIT
 """
@@ -35,31 +36,30 @@ logging.getLogger('slack_bolt').setLevel(logging.INFO)
 
 load_dotenv()
 
-# --- LOCAL BRAIN (ROUTER ONLY MODE) ---
+# --- LOCAL BRAIN (ROUTER ONLY - NO REWRITING) ---
 class LocalBrain:
     def __init__(self, model='llama3.2:1b'):
         self.model = model
 
-    def analyze_intent(self, user_message: str, available_clusters: List[str]) -> Dict[str, Any]:
+    def analyze_intent(self, user_message: str, available_clusters: List[str]) -> List[str]:
         """
-        ROUTER ONLY: Extracts cluster names. Does NOT filter for safety.
+        ROUTER ONLY: Extracts cluster names. 
+        Returns a list of target clusters.
         """
         cluster_list_str = ", ".join(available_clusters) if available_clusters else "none"
         
-        # Simple prompt: Just find the cluster names.
+        # CHANGED: Prompt focuses ONLY on extracting names. No prompt rewriting.
         system_prompt = f"""
-        You are a Cluster Router.
+        You are a Router.
         Valid Clusters: [{cluster_list_str}]
 
         Task:
-        1. Analyze the user prompt.
+        1. Read the user input.
         2. Identify if any "Valid Clusters" are mentioned.
-        3. If "compare" is used, list all involved clusters.
         
         Return JSON ONLY:
         {{
-            "target_clusters": ["cluster_name_1", "cluster_name_2"],
-            "refined_prompt": "the user prompt"
+            "target_clusters": ["cluster_name_1", "cluster_name_2"]
         }}
         """
 
@@ -88,28 +88,18 @@ class LocalBrain:
                 if start != -1 and end != -1:
                     data = json.loads(content[start:end])
                 else:
-                    # If parsing fails, just default to normal behavior (no specific cluster)
                     data = {}
 
             # Sanitize: Only allow clusters that actually exist in our config
             found_clusters = [c for c in data.get("target_clusters", []) if c in available_clusters]
-
-            return {
-                "is_clean": True, # ALWAYS TRUE - FULL CONTROL
-                "target_clusters": found_clusters,
-                "refined_prompt": data.get("refined_prompt", user_message)
-            }
+            
+            return found_clusters
             
         except Exception as e:
             logger.error(f"🧠 Brain Error: {e}")
-            # Fail Open: Allow the request to proceed to default cluster
-            return {
-                "is_clean": True, 
-                "target_clusters": [], 
-                "refined_prompt": user_message
-            }
+            return []
 
-# --- KAGENT CLIENT (Protocol Implementation) ---
+# --- KAGENT CLIENT ---
 class KagentClient:
     def __init__(self, base_url: Optional[str] = None, namespace: Optional[str] = None,
                  agent_name: Optional[str] = None, multi_cluster: bool = False,
@@ -304,23 +294,17 @@ def handle_mention(event, say, logger):
         return
 
     # 1. BRAIN ANALYSIS (Routing Only)
+    # We ask the brain only "Where does this go?"
     avail_clusters = KAGENT_CLUSTERS if ENABLE_MULTI_CLUSTER else []
-    analysis = local_brain.analyze_intent(user_message, avail_clusters)
+    target_clusters = local_brain.analyze_intent(user_message, avail_clusters)
     
-    # 2. SECURITY CHECK REMOVED
-    # Code assumes "is_clean" is True.
-
-    # 3. ROUTING
-    target_clusters = analysis.get("target_clusters", [])
-    prompt_to_send = analysis.get("refined_prompt", user_message)
-
     # Fallback to default if no specific cluster mentioned
     if not target_clusters:
         target_clusters = [None] 
 
     results = []
 
-    # 4. EXECUTION LOOP
+    # 2. EXECUTION LOOP
     for cluster in target_clusters:
         cluster_name = cluster if cluster else (KAGENT_DEFAULT_CLUSTER if ENABLE_MULTI_CLUSTER else "Default")
         
@@ -329,7 +313,8 @@ def handle_mention(event, say, logger):
             say(f"🔄 Querying: *{cluster_name}*...", thread_ts=thread_ts)
 
         try:
-            result = kagent.send_message(prompt_to_send, thread_id=thread_ts, cluster=cluster)
+            # FIX: We now send 'user_message' directly. The Brain is NOT rewriting it.
+            result = kagent.send_message(user_message, thread_id=thread_ts, cluster=cluster)
             
             if result['status'] == 'completed' and result['response']:
                 resp = result['response']
@@ -344,7 +329,7 @@ def handle_mention(event, say, logger):
             logger.error(f"❌ Error in loop: {e}")
             results.append(f"❌ Failed to query {cluster_name}")
 
-    # 5. SEND FINAL RESPONSE
+    # 3. SEND FINAL RESPONSE
     final_output = "\n\n---\n\n".join(results)
     say(final_output, thread_ts=thread_ts)
 
