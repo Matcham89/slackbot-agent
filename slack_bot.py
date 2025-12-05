@@ -1,12 +1,16 @@
 """
-Kagent Slack Bot - Phase 4: Targeted Map-Reduce
+Kagent Slack Bot - Phase 5: Remote Brain Edition
 
-A robust multi-cluster orchestrator optimized for local LLMs (Llama 3.2 1B).
+A robust multi-cluster orchestrator.
+- Runs on: Laptop (Lightweight)
+- Connects to: Ollama on Talos Cluster (Heavy Lifting)
+- Model: Llama 3.2 (3B) - Smarter than the 1B version.
 
 FEATURES:
-1. Targeted Planning: Distinguishes between "List All" and "Get Specific Resource" to reduce noise.
-2. Compact Fetching: Asks agents for brief data to save context window.
-3. Strict Synthesis: Compares only what was asked.
+1. Remote Connection: Connects to OLLAMA_HOST.
+2. Targeted Planning: Distinguishes "Specific Resource" vs "List All".
+3. Compact Fetching: Saves context window.
+4. Graceful Exit: No more ugly error messages when stopping.
 
 License: MIT
 """
@@ -20,7 +24,7 @@ from sseclient import SSEClient
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
-import ollama 
+from ollama import Client  # CHANGED: Import Client for custom host connection
 
 # Configure logging
 logging.basicConfig(
@@ -35,15 +39,21 @@ logging.getLogger('slack_bolt').setLevel(logging.INFO)
 
 load_dotenv()
 
-# --- LOCAL BRAIN (TARGETED ORCHESTRATOR) ---
+# --- LOCAL BRAIN (REMOTE CONNECTED) ---
 class LocalBrain:
-    def __init__(self, model='llama3.2:1b'):
+    def __init__(self, model='llama3.2'): # UPGRADED: Default to 3B model (better for 60GB RAM)
         self.model = model
+        
+        # CONFIGURATION: Look for OLLAMA_HOST env var, default to localhost
+        host = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
+        logger.info(f"🧠 Connecting to Brain at: {host}")
+        
+        # Initialize the specific client
+        self.client = Client(host=host)
 
     def create_execution_plan(self, user_message: str, available_clusters: List[str]) -> List[Dict[str, str]]:
         """
         MAP STEP: Generates tasks.
-        LOGIC: Detects if the user wants a SPECIFIC resource or a LIST.
         """
         cluster_list_str = ", ".join(available_clusters) if available_clusters else "none"
         
@@ -74,7 +84,8 @@ class LocalBrain:
 
         try:
             logger.info(f"🧠 Planning with {self.model}...")
-            response = ollama.chat(
+            # Use self.client instead of global ollama
+            response = self.client.chat(
                 model=self.model,
                 format='json', 
                 options={'temperature': 0.0}, 
@@ -127,7 +138,7 @@ class LocalBrain:
 
         try:
             logger.info(f"🧠 Synthesizing with {self.model}...")
-            response = ollama.chat(
+            response = self.client.chat(
                 model=self.model,
                 options={'temperature': 0.1}, 
                 messages=[
@@ -204,7 +215,8 @@ class KagentClient:
             headers["CF-Access-Client-Secret"] = os.environ.get("CF_ACCESS_CLIENT_SECRET")
 
         try:
-            response = requests.post(endpoint, json=payload, headers=headers, stream=True, timeout=300, verify=True)
+            # Add timeout to prevent hanging if cluster is slow
+            response = requests.post(endpoint, json=payload, headers=headers, stream=True, timeout=60, verify=True)
             response.raise_for_status()
             return self._parse_stream(response, thread_id, target)
         except Exception as e:
@@ -262,14 +274,21 @@ if ENABLE_MULTI_CLUSTER:
             url = os.environ.get(f"KAGENT_{c.upper()}_URL")
             if url: CLUSTER_ENDPOINTS[c] = url
 
+if not SLACK_BOT_TOKEN or not SLACK_APP_TOKEN:
+    logger.error("❌ Missing SLACK tokens")
+    exit(1)
+
 app = App(token=SLACK_BOT_TOKEN)
-local_brain = LocalBrain(model='llama3.2:1b')
+
+# Initialize Brain with 3B Model (since we are remote now)
+local_brain = LocalBrain(model='llama3.2') 
+
 if ENABLE_MULTI_CLUSTER:
     kagent = KagentClient(multi_cluster=True, cluster_endpoints=CLUSTER_ENDPOINTS, default_cluster=KAGENT_DEFAULT_CLUSTER)
 else:
     kagent = KagentClient(base_url=os.environ.get("KAGENT_BASE_URL"), namespace=os.environ.get("KAGENT_NAMESPACE"), agent_name=os.environ.get("KAGENT_AGENT_NAME"))
 
-logger.info("✅ System initialized (Mode: TARGETED MAP-REDUCE)")
+logger.info("✅ System initialized")
 
 # --- HANDLER ---
 @app.event("app_mention")
@@ -319,5 +338,11 @@ def handle_mention(event, say, logger):
         say(collected_results[single_key], thread_ts=thread_ts)
 
 if __name__ == "__main__":
+    logger.info(f"🎬 Starting Bot with {local_brain.model}...")
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
-    handler.start()
+    
+    try:
+        handler.start()
+    except KeyboardInterrupt:
+        print("\n\n🛑 Bot stopped by user. Exiting...")
+        exit(0)
