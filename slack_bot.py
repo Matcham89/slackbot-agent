@@ -1,16 +1,20 @@
 """
-Kagent Slack Bot - Phase 5: Remote Brain Edition
+Kagent Slack Bot - Intelligent Router Edition
 
-A robust multi-cluster orchestrator.
-- Runs on: Laptop (Lightweight)
-- Connects to: Ollama on Talos Cluster (Heavy Lifting)
-- Model: Llama 3.2 (3B) - Smarter than the 1B version.
+A natural language Slack bot that routes queries to k8s-agents and compares results.
+
+ARCHITECTURE:
+1. User asks question in Slack: "@kagent how is my dev cluster"
+2. LocalBrain (Ollama) routes the query to the appropriate cluster(s)
+3. k8s-agent in each cluster responds with natural language
+4. For single cluster: Pass through k8s-agent's response directly
+5. For multi-cluster: LocalBrain compares and synthesizes the responses
 
 FEATURES:
-1. Remote Connection: Connects to OLLAMA_HOST.
-2. Targeted Planning: Distinguishes "Specific Resource" vs "List All".
-3. Compact Fetching: Saves context window.
-4. Graceful Exit: No more ugly error messages when stopping.
+- Natural language preservation: k8s-agent responses are not rewritten
+- Intelligent routing: Detects which clusters to query
+- Multi-cluster comparison: Compares responses when needed
+- Conversation context: Maintains thread history
 
 License: MIT
 """
@@ -18,7 +22,7 @@ import os
 import json
 import logging
 import hashlib
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List
 import requests
 from sseclient import SSEClient
 from slack_bolt import App
@@ -65,29 +69,40 @@ class LocalBrain:
 
     def create_execution_plan(self, user_message: str, available_clusters: List[str]) -> List[Dict[str, str]]:
         """
-        MAP STEP: Generates tasks.
+        MAP STEP: Intelligently routes user queries to the appropriate clusters.
+        Returns the ORIGINAL user message to preserve natural language intent.
         """
         cluster_list_str = ", ".join(available_clusters) if available_clusters else "none"
-        
+
         system_prompt = f"""
-        You are a Kubernetes Planner.
+        You are a Kubernetes cluster router.
         Available Clusters: [{cluster_list_str}]
 
-        YOUR RULES:
-        1. Identify which clusters need to be queried.
-        2. Analyze if the user is asking about a SPECIFIC resource name (e.g. "kagent-controller", "redis-pod") or ALL resources.
-        
-        IF SPECIFIC NAME FOUND:
-           Query: "Get details for the deployment/pod named 'NAME' in this cluster. Format: Compact."
-        
-        IF GENERAL / "ALL":
-           Query: "List all deployments in this cluster. Format: Namespace :: Name :: Image."
+        YOUR TASK:
+        1. Identify which clusters the user wants to query based on their message.
+        2. Pass the ORIGINAL user question to each cluster (don't modify it).
+        3. The k8s-agent in each cluster will handle the natural language interpretation.
 
+        RULES:
+        - If user mentions specific cluster names (e.g., "dev", "test", "prod"), include only those.
+        - If user says "compare X and Y", include both clusters.
+        - If no cluster mentioned, use ALL available clusters if the question implies comparison, otherwise just the first one.
+        - ALWAYS use the user's original question as the query - don't rewrite it.
+
+        EXAMPLE INPUT: "how is my dev cluster"
         EXAMPLE OUTPUT:
         {{
             "tasks": [
-                {{"cluster": "test", "query": "Get details for deployment 'kagent-controller' in this cluster. Format: Compact."}},
-                {{"cluster": "dev", "query": "Get details for deployment 'kagent-controller' in this cluster. Format: Compact."}}
+                {{"cluster": "dev", "query": "how is my dev cluster"}}
+            ]
+        }}
+
+        EXAMPLE INPUT: "compare deployments in test and prod"
+        EXAMPLE OUTPUT:
+        {{
+            "tasks": [
+                {{"cluster": "test", "query": "compare deployments in test and prod"}},
+                {{"cluster": "prod", "query": "compare deployments in test and prod"}}
             ]
         }}
 
@@ -95,18 +110,17 @@ class LocalBrain:
         """
 
         try:
-            logger.info(f"🧠 Planning with {self.model}...")
-            # Use self.client instead of global ollama
+            logger.info(f"🧠 Routing query with {self.model}...")
             response = self.client.chat(
                 model=self.model,
-                format='json', 
-                options={'temperature': 0.0}, 
+                format='json',
+                options={'temperature': 0.0},
                 messages=[
                     {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': user_message},
                 ]
             )
-            
+
             # Robust Parsing
             content = response['message']['content']
             try:
@@ -120,46 +134,66 @@ class LocalBrain:
             for task in data.get("tasks", []):
                 if task.get("cluster") in available_clusters:
                     valid_tasks.append(task)
-            
+
             return valid_tasks
-            
+
         except Exception as e:
-            logger.error(f"🧠 Plan Error: {e}")
+            logger.error(f"🧠 Routing Error: {e}")
             return []
 
     def synthesize_results(self, user_query: str, results: Dict[str, str]) -> str:
         """
-        REDUCE STEP: Summarizes the specific data found.
+        REDUCE STEP: Only used for multi-cluster comparisons.
+        Compares natural language responses from multiple k8s-agents.
         """
         context_text = ""
         for cluster, response in results.items():
-            context_text += f"=== DATA FROM CLUSTER '{cluster}' ===\n{response}\n\n"
+            context_text += f"=== Response from '{cluster.upper()}' cluster ===\n{response}\n\n"
 
         system_prompt = f"""
-        You are a Kubernetes Auditor providing clear, well-formatted Slack responses.
-        User Question: "{user_query}"
+        You are comparing Kubernetes cluster responses for a user.
 
-        Task:
-        1. Compare the data provided below.
-        2. Answer the user's question directly and concisely.
-        3. DO NOT mention resources that were not asked for.
-        4. If the versions/images are different, highlight that clearly.
-        5. Format your response for readability in Slack:
-           - Use markdown headings (## for sections)
-           - Use bullet points or numbered lists for multiple items
-           - Use *bold* for important values
-           - For long lists (>10 items), group by namespace or category
-           - If listing deployments, use format: `namespace/name` (image:tag)
-        6. Keep responses under 3000 characters for Slack limits.
+        Original Question: "{user_query}"
 
-        Keep it concise and scannable.
+        Below are natural language responses from different k8s-agents, one per cluster.
+        Each agent has already analyzed their cluster and provided a natural response.
+
+        YOUR TASK:
+        1. Provide a brief introduction acknowledging you've reviewed all clusters.
+        2. Compare and contrast the responses from each cluster.
+        3. Highlight key differences (versions, resource counts, configurations, issues).
+        4. If clusters are similar, say so clearly.
+        5. Use natural, conversational language like a helpful engineer.
+        6. Keep it concise and actionable.
+
+        FORMAT GUIDELINES:
+        - Start with a natural intro like "I've reviewed both clusters..." or "I've compared the deployments across test and dev..."
+        - Use markdown headings for each cluster if helpful (### Test Cluster, ### Dev Cluster)
+        - Use *bold* for important differences
+        - Use bullet points for lists
+        - Keep under 3000 characters
+
+        EXAMPLE TONE:
+        "I've reviewed both your test and dev clusters. Here's what I found:
+
+        ### Test Cluster
+        - Running 25 deployments across 8 namespaces
+        - Kagent version: 0.7.5
+
+        ### Dev Cluster
+        - Running 23 deployments across 8 namespaces
+        - Kagent version: *0.7.4* (older than test)
+
+        The main difference is that test is running a newer Kagent version (0.7.5 vs 0.7.4)."
+
+        Be conversational and helpful.
         """
 
         try:
-            logger.info(f"🧠 Synthesizing with {self.model}...")
+            logger.info(f"🧠 Comparing multi-cluster responses with {self.model}...")
             response = self.client.chat(
                 model=self.model,
-                options={'temperature': 0.1},
+                options={'temperature': 0.2},  # Slightly higher for natural language
                 messages=[
                     {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': context_text},
@@ -174,7 +208,7 @@ class LocalBrain:
             return result
         except Exception as e:
             logger.error(f"🧠 Synthesis Error: {e}")
-            return "⚠️ Error synthesizing results."
+            return "⚠️ Error comparing cluster responses."
 
 # --- KAGENT CLIENT (Standard) ---
 class KagentClient:
@@ -366,44 +400,10 @@ else:
 logger.info("✅ System initialized successfully")
 
 # --- HELPER FUNCTIONS ---
-def format_single_cluster_response(response: str) -> str:
-    """Format a single cluster response for better readability."""
-    # If response is very long and looks like a deployment list, add formatting
-    lines = response.split('\n')
-
-    # Check if it's a deployment list (contains " :: " pattern)
-    if len(lines) > MAX_DEPLOYMENTS_DISPLAY and ' :: ' in response:
-        # Group by namespace
-        from collections import defaultdict
-        deployments_by_ns: Dict[str, List[str]] = defaultdict(list)
-
-        header = ""
-        for line in lines:
-            if ' :: ' in line:
-                parts = line.split(' :: ')
-                if len(parts) >= 2:
-                    namespace = parts[0].strip()
-                    deployment_info = ' :: '.join(parts[1:])
-                    deployments_by_ns[namespace].append(deployment_info)
-            elif line.strip() and not header:
-                header = line
-
-        # Build formatted response
-        result = []
-        if header:
-            result.append(header + "\n")
-
-        result.append(f"## Deployments by Namespace ({sum(len(v) for v in deployments_by_ns.values())} total)\n")
-
-        for ns, deps in sorted(deployments_by_ns.items()):
-            result.append(f"\n### {ns} ({len(deps)} deployments)")
-            for dep in deps[:10]:  # Limit to 10 per namespace
-                result.append(f"  • {dep}")
-            if len(deps) > 10:
-                result.append(f"  _... and {len(deps) - 10} more_")
-
-        return '\n'.join(result)
-
+def truncate_if_needed(response: str, max_length: int = 3500) -> str:
+    """Truncate response if it exceeds Slack's message limit."""
+    if len(response) > max_length:
+        return response[:max_length - 100] + "\n\n_[Response truncated due to Slack message limit]_"
     return response
 
 
@@ -471,23 +471,23 @@ def handle_mention(event, say, _logger):
                 logger.error(f"Exception querying {cluster_name}: {e}")
                 collected_results[cluster_name] = f"⚠️ Error: {str(e)}"
 
-        # 3. SYNTHESIZE
+        # 3. SYNTHESIZE (only for multi-cluster comparisons)
         if not collected_results:
             say("⚠️ No results collected from clusters.", thread_ts=thread_ts)
             return
 
         if len(collected_results) > 1:
-            say("🧠 Analyzing results...", thread_ts=thread_ts)
+            # Multiple clusters: compare responses
+            say("🧠 Comparing cluster responses...", thread_ts=thread_ts)
             final_answer = local_brain.synthesize_results(user_message, collected_results)
-            say(final_answer, thread_ts=thread_ts)
+            say(truncate_if_needed(final_answer), thread_ts=thread_ts)
         else:
-            # Single cluster response
+            # Single cluster: pass through k8s-agent's natural language response directly
             single_key = list(collected_results.keys())[0]
             response = collected_results[single_key]
 
-            # Format if needed
-            formatted = format_single_cluster_response(response)
-            say(formatted, thread_ts=thread_ts)
+            # Just truncate if needed, don't reformat - k8s-agent already provides natural language
+            say(truncate_if_needed(response), thread_ts=thread_ts)
 
     except Exception as e:
         logger.error(f"❌ Error in handle_mention: {e}", exc_info=True)
