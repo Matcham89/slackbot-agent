@@ -1,506 +1,202 @@
-# Laptop/Server Deployment Guide - Method 2: Multi-Cluster via AgentGateway
+-----
 
-Deploy ONE Kagent Slack bot on a laptop or server that routes to multiple clusters via AgentGateway.
+# Kagent Slack Bot - AI Orchestrator Edition
 
-## When to Use This Method
+A "Senior Engineer" Slack bot that orchestrates Kubernetes tasks across multiple clusters using a Local LLM Brain.
 
-- You want a **single Slack bot** for all clusters (@kagent)
-- Users specify cluster keywords (test, dev, prod) in messages
-- Central management from one bot instance
-- AgentGateway is deployed and accessible on each cluster
+Unlike simple chatbots, this bot uses a **Map-Reduce Architecture**:
+
+1.  **Plan:** The AI Brain analyzes complex requests (e.g., "Compare dev and test").
+2.  **Map:** It dispatches targeted queries to specific agents on different clusters.
+3.  **Reduce:** It synthesizes the data returned from all clusters into a single, comparative report.
 
 ## Architecture
 
+```mermaid
+graph TD
+    User((User)) -->|Slack| Bot[Python Slack Bot]
+    
+    subgraph "The Brain (Remote/Local)"
+        Bot <-->|JSON Plans| Ollama[Ollama Server]
+        note[Running Llama 3.2 or Qwen 2.5]
+    end
+    
+    subgraph "Infrastructure"
+        Bot -->|a2a Protocol| AgentTest[AgentGateway: Test]
+        Bot -->|a2a Protocol| AgentDev[AgentGateway: Dev]
+    end
+    
+    AgentTest --> K8sTest((Test Cluster))
+    AgentDev --> K8sDev((Dev Cluster))
 ```
-Slack → Bot (laptop/server) → AgentGateway (port 8080) → Kagent Controller → k8s-agent → Kubernetes API
-                                     ↓
-                            Routes to test, dev, or prod cluster
-```
-
-The bot runs on a middleman machine with network access to all AgentGateway endpoints.
-
----
 
 ## Prerequisites
 
-- **Python 3.13+** installed
-- **Network access** to all cluster AgentGateway endpoints (port 8080)
-  - Test cluster: `192.168.1.200:8080`
-  - Dev cluster: `192.168.1.201:8080`
-- **AgentGateway** deployed on each cluster
-- **Slack workspace** admin access (to create/configure bot)
+  - **Python 3.13+**
+  - **Ollama Server** running and accessible.
+      - Recommended Models: `llama3.2` (3B) for speed, or `qwen2.5:32b` for complex reasoning.
+  - **AgentGateway** deployed on your target clusters (Port 8080).
+  - **Network Access**:
+      - The bot must reach the AgentGateway IPs.
+      - The bot must reach the Ollama API (Port 11434 or via Istio Gateway).
 
----
+-----
 
-## Quick Start
+## Installation
 
-### 1. Clone and Setup
+### 1\. Clone and Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/your-org/kagent-slack-bot.git
 cd kagent-slack-bot
 
-# Create virtual environment
+# Create and activate virtual environment
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate
 
-# Install dependencies
+# Install dependencies (ensure 'ollama' lib is included)
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment
+### 2\. Configuration (.env)
+
+Create a `.env` file based on the example.
 
 ```bash
-# Copy example config
 cp .env.example .env
-
-# Edit .env with your configuration
 nano .env
 ```
 
-**Update .env for multi-cluster setup:**
+**Required Configuration:**
 
 ```bash
-# Slack credentials
-SLACK_BOT_TOKEN=xoxb-your-bot-token-here
-SLACK_APP_TOKEN=xapp-your-app-token-here
+# --- Slack Credentials ---
+SLACK_BOT_TOKEN=xoxb-your-token
+SLACK_APP_TOKEN=xapp-your-token
 
-# Enable multi-cluster mode
+# --- AI Brain Configuration ---
+# Option A: Running locally on the same machine
+# OLLAMA_HOST=http://localhost:11434
+
+# Option B: Running on K8s via Istio Gateway (Recommended)
+OLLAMA_HOST=http://ollama.dev.local
+
+# Option C: Running on Dedicated AI Server IP
+# OLLAMA_HOST=http://192.168.1.55:11434
+
+# --- Multi-Cluster Setup ---
 ENABLE_MULTI_CLUSTER=true
-
-# Kagent namespace (same across all clusters)
-KAGENT_NAMESPACE=kagent
-
-# Define clusters (comma-separated)
 KAGENT_CLUSTERS=test,dev
-
-# Default cluster when no keyword detected
 KAGENT_DEFAULT_CLUSTER=test
 
-# Agent name pattern (same agent name on all clusters)
-KAGENT_AGENT_PATTERN=k8s-agent
-
-# AgentGateway endpoints (port 8080)
+# --- Cluster Endpoints (AgentGateway) ---
 KAGENT_TEST_BASE_URL=http://192.168.1.200:8080
 KAGENT_DEV_BASE_URL=http://192.168.1.201:8080
-# KAGENT_PROD_BASE_URL=http://192.168.1.202:8080
+
+# --- Agent Config ---
+KAGENT_NAMESPACE=kagent
+KAGENT_AGENT_PATTERN=k8s-agent
 ```
 
-**Get Slack tokens:**
-- Bot token (xoxb-...): Slack App → OAuth & Permissions → Bot User OAuth Token
-- App token (xapp-...): Slack App → Basic Information → App-Level Tokens
+### 3\. DNS & Network (Crucial for Remote Brain)
 
-### 3. Test Connection
+If you are hosting Ollama on your Kubernetes cluster behind an **Istio Gateway** (e.g., `ollama.dev.local`), you must map the domain to the Gateway IP.
 
-Test that you can reach AgentGateway endpoints:
+1.  **Get Gateway IP:**
+
+    ```bash
+    kubectl get svc -n istio-system istio-gateway
+    # Example EXTERNAL-IP: 192.168.1.202
+    ```
+
+2.  **Update Hosts File (On the machine running the bot):**
+
+    ```bash
+    sudo nano /etc/hosts
+    ```
+
+    Add the line:
+
+    ```text
+    192.168.1.202  ollama.dev.local
+    ```
+
+### 4\. Run the Bot
 
 ```bash
-# Test test cluster
-curl http://192.168.1.200:8080/api/a2a/kagent/k8s-agent/.well-known/agent.json
-
-# Test dev cluster
-curl http://192.168.1.201:8080/api/a2a/kagent/k8s-agent/.well-known/agent.json
-```
-
-**Expected output:** JSON with agent metadata (not 404 or connection refused).
-
-### 4. Run the Bot
-
-```bash
-# Activate virtual environment
 source venv/bin/activate
-
-# Run bot
 python slack_bot.py
 ```
 
-**Expected output:**
-```
-✅ Slack app initialized
-🚀 Starting Kagent Slack Bot...
-🌐 Multi-cluster routing mode enabled
-   Using pattern-based routing: k8s-agent
-   Kagent: http://192.168.1.200:8080
-   Clusters: test, dev
-   Default cluster: test
-⚡️ Kagent Slack Bot is running!
+**Expected Output:**
+
+```text
+🧠 Connecting to Brain at: http://ollama.dev.local
+🔧 Kagent client initialized (multi-cluster)
+✅ System initialized (Mode: TARGETED MAP-REDUCE)
+🎬 Starting Bot...
 ⚡️ Bolt app is running!
 ```
 
-### 5. Test in Slack
+-----
 
-```
-# Invite bot to a channel
-/invite @kagent
+## Usage Examples
 
-# Test routing to different clusters
-@kagent list namespaces in test cluster
-@kagent what pods are running in dev?
-@kagent show deployments  ← Uses default cluster (test)
-```
+Once running, the bot acts as an intelligent orchestrator.
 
-The bot should detect cluster keywords and route accordingly!
+### 1\. Multi-Cluster Comparison (Map-Reduce)
 
----
+*Ask the bot to compare resources across environments. The AI will split this into two tasks, fetch the data, and synthesize a report.*
 
-## Running as a Systemd Service (Linux)
+> **User:** `@kagent compare the deployments in test and dev`
+>
+> **Bot:**
+> 🔄 Fetching from **test**...
+> 🔄 Fetching from **dev**...
+> 🧠 Analyzing...
+> **Comparison Report:**
+>
+>   - Deployment `kagent-controller` exists in both.
+>   - **Difference:** Test is running v0.7.1, Dev is running v0.7.5.
 
-For production deployment on a Linux server, run as a systemd service.
+### 2\. Targeted Resource Lookup
 
-### 1. Create Service File
+*Ask about a specific resource to prevent data flooding.*
 
-```bash
-sudo nano /etc/systemd/system/kagent-slack-bot.service
-```
+> **User:** `@kagent what is the status of the redis pod in dev?`
+>
+> **Bot:** (Fetches ONLY the redis pod details from Dev)
 
-**Add the following:**
+### 3\. General Inquiry
 
-```ini
-[Unit]
-Description=Kagent Slack Bot (Multi-Cluster)
-After=network-online.target
-Wants=network-online.target
+> **User:** `@kagent how many namespaces are in test?`
 
-[Service]
-Type=simple
-User=your-username
-WorkingDirectory=/home/your-username/kagent-slack-bot
-EnvironmentFile=/home/your-username/kagent-slack-bot/.env
-ExecStart=/home/your-username/kagent-slack-bot/venv/bin/python slack_bot.py
-Restart=always
-RestartSec=10
-
-# Security hardening
-NoNewPrivileges=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**Update:**
-- Replace `your-username` with your actual username
-- Update paths to match your installation directory
-
-### 2. Enable and Start Service
-
-```bash
-# Reload systemd
-sudo systemctl daemon-reload
-
-# Enable service to start on boot
-sudo systemctl enable kagent-slack-bot
-
-# Start service
-sudo systemctl start kagent-slack-bot
-
-# Check status
-sudo systemctl status kagent-slack-bot
-```
-
-### 3. View Logs
-
-```bash
-# Follow logs in real-time
-sudo journalctl -u kagent-slack-bot -f
-
-# View last 100 lines
-sudo journalctl -u kagent-slack-bot -n 100
-
-# View logs since boot
-sudo journalctl -u kagent-slack-bot -b
-```
-
-### 4. Manage Service
-
-```bash
-# Restart service
-sudo systemctl restart kagent-slack-bot
-
-# Stop service
-sudo systemctl stop kagent-slack-bot
-
-# Disable service
-sudo systemctl disable kagent-slack-bot
-```
-
----
-
-## Running on macOS/Windows
-
-For non-Linux systems, use a terminal session or process manager.
-
-### macOS
-
-**Option 1: Terminal (Development)**
-```bash
-# Run in terminal
-source venv/bin/activate
-python slack_bot.py
-```
-
-**Option 2: Background Process**
-```bash
-# Run in background
-nohup python slack_bot.py > kagent-bot.log 2>&1 &
-
-# View logs
-tail -f kagent-bot.log
-
-# Stop bot
-pkill -f slack_bot.py
-```
-
-### Windows
-
-**Option 1: Command Prompt (Development)**
-```cmd
-# Activate environment
-venv\Scripts\activate
-
-# Run bot
-python slack_bot.py
-```
-
-**Option 2: Windows Service (Advanced)**
-Use tools like [NSSM](https://nssm.cc/) to run as a Windows service.
-
----
-
-## Configuration
-
-### Adding More Clusters
-
-Edit `.env` to add more clusters:
-
-```bash
-# Add production cluster
-KAGENT_CLUSTERS=test,dev,prod
-KAGENT_PROD_BASE_URL=http://192.168.1.202:8080
-```
-
-**Restart the bot:**
-```bash
-# If running manually
-Ctrl+C, then: python slack_bot.py
-
-# If running as systemd service
-sudo systemctl restart kagent-slack-bot
-```
-
-### Changing Default Cluster
-
-```bash
-# Set dev as default instead of test
-KAGENT_DEFAULT_CLUSTER=dev
-```
-
-Messages without cluster keywords will route to dev.
-
-### Network Troubleshooting
-
-If bot can't reach AgentGateway endpoints:
-
-**Check connectivity:**
-```bash
-# Ping cluster IPs
-ping 192.168.1.200
-ping 192.168.1.201
-
-# Test HTTP connection
-curl -v http://192.168.1.200:8080/api/a2a/kagent/k8s-agent/.well-known/agent.json
-```
-
-**Common issues:**
-- **Connection refused**: AgentGateway not running or wrong port
-- **Connection timeout**: Firewall blocking port 8080
-- **DNS resolution failed**: Using hostname instead of IP, DNS not configured
-
-**Solutions:**
-- Verify AgentGateway is running: `kubectl get pods -n kagent`
-- Check firewall rules allow port 8080
-- Use VPN if clusters are on private network
-- Use IP addresses instead of hostnames if DNS not available
-
----
-
-## Updating
-
-### Update Code
-
-```bash
-# Pull latest changes
-git pull
-
-# Activate environment
-source venv/bin/activate
-
-# Update dependencies
-pip install -r requirements.txt --upgrade
-
-# Restart bot
-# If systemd:
-sudo systemctl restart kagent-slack-bot
-
-# If running manually:
-Ctrl+C, then: python slack_bot.py
-```
-
-### Update Slack Tokens
-
-Edit `.env` with new tokens:
-
-```bash
-SLACK_BOT_TOKEN=xoxb-new-token
-SLACK_APP_TOKEN=xapp-new-token
-```
-
-**Restart bot** to apply changes.
-
----
-
-## Monitoring
-
-### Check Bot Status
-
-```bash
-# If running as systemd service
-sudo systemctl status kagent-slack-bot
-
-# If running manually
-ps aux | grep slack_bot.py
-```
-
-### View Logs
-
-**Systemd service:**
-```bash
-sudo journalctl -u kagent-slack-bot -f
-```
-
-**Manual/background process:**
-```bash
-tail -f kagent-bot.log
-```
-
-**Look for:**
-```
-🔔 Received app_mention event
-   Detected cluster: test
-🆕 Starting new conversation for cluster: test
-📊 Processed 5 events from stream
-💬 Found agent response
-```
-
----
+-----
 
 ## Troubleshooting
 
-### Bot Not Starting
+### `Brain Plan Error: Failed to connect to Ollama`
 
-**Check Python version:**
-```bash
-python --version  # Should be 3.13+
-```
+  * **Cause:** The bot cannot reach the `OLLAMA_HOST`.
+  * **Fix:**
+      * Verify the URL in `.env`.
+      * If using Istio, verify `/etc/hosts` is set.
+      * Test via curl: `curl http://ollama.dev.local/api/tags`
 
-**Check dependencies:**
-```bash
-pip install -r requirements.txt
-```
+### `404 Not Found` (Istio/Gateway)
 
-**Check .env file:**
-```bash
-cat .env | grep -v "^#"  # View active config
-```
+  * **Cause:** The Gateway is rejecting the hostname.
+  * **Fix:** Ensure your `HTTPRoute` references the correct parent Gateway and that the Gateway allows routes from the target namespace (`from: All`).
 
-### Bot Not Responding in Slack
+### `Timeout` / Slow Responses
 
-1. Check bot is running: `systemctl status kagent-slack-bot`
-2. Check Slack tokens are correct in `.env`
-3. Verify Slack app configuration (Socket Mode, Event Subscriptions)
-4. Check logs for errors: `journalctl -u kagent-slack-bot -n 50`
+  * **Cause:** Using a large model (32B/70B) on a CPU.
+  * **Fix:** Increase the timeout in `slack_bot.py`:
+    ```python
+    response = requests.post(..., timeout=120)
+    ```
 
-### Can't Connect to AgentGateway
+### Bot Hallucinations (e.g., "The user prompt")
 
-**Test endpoints:**
-```bash
-# Test each cluster
-for ip in 192.168.1.200 192.168.1.201; do
-  echo "Testing $ip..."
-  curl -s "http://$ip:8080/api/a2a/kagent/k8s-agent/.well-known/agent.json" | jq .name || echo "Failed to connect to $ip"
-done
-```
-
-**Common fixes:**
-- Check VPN connection if using VPN
-- Verify firewall rules allow outbound to port 8080
-- Confirm AgentGateway is running on clusters
-
-### Cluster Keyword Not Detected
-
-The bot looks for these keywords in messages:
-- `test`, `testing` → routes to test cluster
-- `dev`, `development` → routes to dev cluster
-- `prod`, `production` → routes to prod cluster
-
-**Examples:**
-- ✅ `@kagent list pods in test cluster`
-- ✅ `@kagent check dev namespace`
-- ✅ `@kagent show test deployments`
-- ❌ `@kagent list pods` → uses default cluster
-
----
-
-## Security Considerations
-
-### Protect .env File
-
-```bash
-# Restrict file permissions
-chmod 600 .env
-
-# Never commit .env to git
-echo ".env" >> .gitignore
-```
-
-### Network Security
-
-- Use VPN for accessing cluster endpoints over internet
-- Consider using Cloudflare tunnels for secure access
-- Firewall rules to restrict access to AgentGateway ports
-
-### Run as Non-Root User
-
-Always run the bot as a non-privileged user, never as root.
-
----
-
-## Deployment Comparison
-
-| Feature | Method 1 (Single Bot Per Cluster) | Method 2 (Multi-Cluster) |
-|---------|-----------------------------------|--------------------------|
-| **Slack bots** | One per cluster (@kagent-test, @kagent-prod) | One bot for all (@kagent) |
-| **Deployment location** | Inside each cluster | Laptop/server/any cluster |
-| **Port** | 8083 (direct A2A) | 8080 (AgentGateway) |
-| **Setup complexity** | Simple | Moderate |
-| **Network requirements** | In-cluster only | Access to all cluster IPs |
-| **AgentGateway** | Not required | Required on each cluster |
-| **Cluster switching** | Switch bots in Slack | Use keywords in message |
-
----
-
-## Next Steps
-
-- **Kubernetes deployment**: See [k8s-deployment-multi-cluster.yaml](k8s-deployment-multi-cluster.yaml) to run this setup in Kubernetes
-- **Single bot per cluster**: See [KUBERNETES.md](KUBERNETES.md) for Method 1
-- **Local development**: See [LOCAL_DEV.md](LOCAL_DEV.md)
-- **Troubleshooting**: See [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-
----
-
-## Support
-
-- **Questions?** Open an issue in the GitHub repository
-- **AgentGateway issues?** Check Kagent documentation
-- **Slack configuration help?** See [README.md](README.md#slack-app-setup)
+  * **Cause:** Using a small model (1B) that overfits to system prompt examples.
+  * **Fix:** Upgrade to `llama3.2` (3B) or `qwen2.5:32b`. The current codebase uses "Zero-Shot" prompting to minimize this.
