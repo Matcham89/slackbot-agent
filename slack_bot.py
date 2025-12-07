@@ -58,6 +58,9 @@ class LocalBrain:
         host = os.environ.get('OLLAMA_HOST', DEFAULT_OLLAMA_HOST)
         logger.info(f"🧠 Connecting to Brain at: {host} (Model: {model})")
 
+        # Track which clusters were used in each thread for context-aware routing
+        self.thread_cluster_history: Dict[str, List[str]] = {}
+
         try:
             self.client = Client(host=host)
             # Test connection
@@ -67,16 +70,29 @@ class LocalBrain:
             logger.error(f"❌ Failed to connect to Ollama at {host}: {e}")
             raise ConnectionError(f"Cannot connect to Ollama at {host}. Ensure Ollama is running.") from e
 
-    def create_execution_plan(self, user_message: str, available_clusters: List[str]) -> List[Dict[str, str]]:
+    def create_execution_plan(self, user_message: str, available_clusters: List[str],
+                              thread_id: Optional[str] = None) -> List[Dict[str, str]]:
         """
         MAP STEP: Intelligently routes user queries to the appropriate clusters.
         Returns the ORIGINAL user message to preserve natural language intent.
+        Maintains thread context for follow-up questions.
         """
         cluster_list_str = ", ".join(available_clusters) if available_clusters else "none"
+
+        # Get previous clusters used in this thread for context
+        previous_clusters = []
+        if thread_id and thread_id in self.thread_cluster_history:
+            previous_clusters = self.thread_cluster_history[thread_id]
+            logger.info(f"🧵 Thread context: Previously used clusters: {previous_clusters}")
+
+        previous_context = ""
+        if previous_clusters:
+            previous_context = f"\nIMPORTANT: In this conversation thread, the user was previously discussing these clusters: {', '.join(previous_clusters)}. If the current message is a follow-up question (e.g., 'yes continue', 'show me more', 'what about memory'), route to the SAME cluster(s) as before."
 
         system_prompt = f"""
         You are a Kubernetes cluster router.
         Available Clusters: [{cluster_list_str}]
+        {previous_context}
 
         YOUR TASK:
         1. Identify which clusters the user wants to query based on their message.
@@ -86,7 +102,8 @@ class LocalBrain:
         RULES:
         - If user mentions specific cluster names (e.g., "dev", "test", "prod"), include only those.
         - If user says "compare X and Y", include both clusters.
-        - If no cluster mentioned, use ALL available clusters if the question implies comparison, otherwise just the first one.
+        - If this is a follow-up question (e.g., "yes", "continue", "show more") and previous clusters exist, use those same clusters.
+        - If no cluster mentioned and no previous context, use the first available cluster.
         - ALWAYS use the user's original question as the query - don't rewrite it.
 
         EXAMPLE INPUT: "how is my dev cluster"
@@ -94,6 +111,14 @@ class LocalBrain:
         {{
             "tasks": [
                 {{"cluster": "dev", "query": "how is my dev cluster"}}
+            ]
+        }}
+
+        EXAMPLE INPUT (follow-up): "yes continue" (previous: dev)
+        EXAMPLE OUTPUT:
+        {{
+            "tasks": [
+                {{"cluster": "dev", "query": "yes continue"}}
             ]
         }}
 
@@ -131,9 +156,18 @@ class LocalBrain:
                 data = json.loads(content[start:end]) if start != -1 else {}
 
             valid_tasks = []
+            used_clusters = []
             for task in data.get("tasks", []):
                 if task.get("cluster") in available_clusters:
                     valid_tasks.append(task)
+                    cluster_name = task.get("cluster")
+                    if cluster_name not in used_clusters:
+                        used_clusters.append(cluster_name)
+
+            # Update thread history for future context
+            if thread_id and used_clusters:
+                self.thread_cluster_history[thread_id] = used_clusters
+                logger.info(f"🧵 Updated thread {thread_id[:8]}... with clusters: {used_clusters}")
 
             return valid_tasks
 
@@ -422,8 +456,8 @@ def handle_mention(event, say, _logger):
         # 1. PLAN (Map Phase)
         avail_clusters = KAGENT_CLUSTERS if ENABLE_MULTI_CLUSTER else []
 
-        logger.info(f"📨 Processing: {user_message[:100]}...")
-        plan = local_brain.create_execution_plan(user_message, avail_clusters)
+        logger.info(f"📨 Processing: {user_message[:100]}... (thread: {thread_ts[:8]}...)")
+        plan = local_brain.create_execution_plan(user_message, avail_clusters, thread_id=thread_ts)
 
         # Handle General Chat (no clusters detected)
         if not plan:
