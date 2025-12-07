@@ -298,22 +298,47 @@ def handle_mention(event, say, logger):
 
     # 1. PLAN (Map Phase)
     avail_clusters = KAGENT_CLUSTERS if ENABLE_MULTI_CLUSTER else []
+    
+    # Ask the Brain for a plan
     plan = local_brain.create_execution_plan(user_message, avail_clusters)
-    if not plan: plan = [{'cluster': None, 'query': user_message}]
+    
+    # --- FIX START: Handle General Chat ---
+    # If the Brain returns NO valid tasks (meaning no clusters were mentioned),
+    # we assume it's general chat (e.g., "Are you up?", "Hello").
+    if not plan:
+        # Just use the Brain to chat directly, skipping the KagentClient entirely
+        # OR send to the default cluster if you prefer
+        
+        # Option A: Send to Default Cluster (if configured)
+        if KAGENT_DEFAULT_CLUSTER:
+            plan = [{'cluster': KAGENT_DEFAULT_CLUSTER, 'query': user_message}]
+        else:
+            # Option B: Just reply locally (No cluster involved)
+            say(f"👋 I'm up and running! (Brain: {local_brain.model})\nI didn't detect a cluster name in your message. Try asking about '{avail_clusters[0] if avail_clusters else 'dev'}'", thread_ts=thread_ts)
+            return
+    # --- FIX END ---
 
     collected_results = {}
     
-    # 2. EXECUTE (Agents do heavy lifting)
+    # 2. EXECUTE
     for task in plan:
         cluster = task.get('cluster')
         query = task.get('query')
-        cluster_name = cluster or "Default"
+        
+        # Verify cluster exists before sending
+        if cluster and cluster not in KAGENT_CLUSTERS and cluster != KAGENT_DEFAULT_CLUSTER:
+            say(f"⚠️ Warning: I don't have an endpoint configured for '{cluster}'", thread_ts=thread_ts)
+            continue
+
+        cluster_name = cluster or KAGENT_DEFAULT_CLUSTER or "Unknown"
         
         if len(plan) > 1:
             say(f"🔄 fetching from *{cluster_name}*...", thread_ts=thread_ts)
 
         try:
-            result = kagent.send_message(query, thread_id=thread_ts, cluster=cluster)
+            # Pass the explicit cluster name to avoid 'None' errors
+            result = kagent.send_message(query, thread_id=thread_ts, cluster=cluster_name)
+            
             if result['response']:
                 collected_results[cluster_name] = result['response']
             else:
@@ -321,18 +346,16 @@ def handle_mention(event, say, logger):
         except Exception as e:
             collected_results[cluster_name] = f"Error: {e}"
 
-    # 3. SYNTHESIZE (Reduce Phase)
+    # 3. SYNTHESIZE
+    if not collected_results:
+        return # Nothing to do
+
     if len(collected_results) > 1:
         say("🧠 Analyzing...", thread_ts=thread_ts)
         final_answer = local_brain.synthesize_results(user_message, collected_results)
-        
-        if "I couldn't synthesize" in final_answer:
-             say("⚠️ Raw Comparison Data:", thread_ts=thread_ts)
-             for c, data in collected_results.items():
-                 say(f"*{c}*:\n```{data[:1000]}```", thread_ts=thread_ts)
-        else:
-             say(final_answer, thread_ts=thread_ts)
+        say(final_answer, thread_ts=thread_ts)
     else:
+        # Single cluster response
         single_key = list(collected_results.keys())[0]
         say(collected_results[single_key], thread_ts=thread_ts)
 
