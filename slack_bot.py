@@ -41,7 +41,7 @@ load_dotenv()
 
 # --- LOCAL BRAIN (REMOTE CONNECTED) ---
 class LocalBrain:
-    def __init__(self, model='llama3.2'): # UPGRADED: Default to 3B model (better for 60GB RAM)
+    def __init__(self, model='qwen2.5:32b'):
         self.model = model
         
         # CONFIGURATION: Look for OLLAMA_HOST env var, default to localhost
