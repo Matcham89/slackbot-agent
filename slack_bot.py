@@ -280,8 +280,7 @@ if not SLACK_BOT_TOKEN or not SLACK_APP_TOKEN:
 
 app = App(token=SLACK_BOT_TOKEN)
 
-# Initialize Brain with 3B Model (since we are remote now)
-local_brain = LocalBrain(model='llama3.2') 
+local_brain = LocalBrain()
 
 if ENABLE_MULTI_CLUSTER:
     kagent = KagentClient(multi_cluster=True, cluster_endpoints=CLUSTER_ENDPOINTS, default_cluster=KAGENT_DEFAULT_CLUSTER)
