@@ -13,6 +13,9 @@ sseclient-py==1.8.0
 # Environment variables
 python-dotenv==1.0.1
 
+# Ollama client for LLM interaction
+ollama==0.4.5
+
 # Security: SSL certificate handling and HTTP client
 certifi==2024.12.14  # SSL certificate handling (keep updated)
 urllib3==2.2.3       # HTTP client (used by requests)
