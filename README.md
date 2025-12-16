@@ -11,16 +11,44 @@ Ask questions about your Kubernetes cluster in natural language directly from Sl
 
 ---
 
+## 🎉 What's New in v2.0
+
+**Token Management & Context Control:**
+- 🔍 **Token Tracking** - Real-time monitoring of conversation token usage
+- ⚠️ **Intelligent Limits** - Automatic detection and prevention of token limit errors
+- 🔄 **Context Commands** - `@kagent reset context`, `@kagent context info`
+- 📊 **Usage Indicators** - Visual feedback when approaching token limits
+
+**Improved Multi-Cluster Support:**
+- 🎯 **Smarter Routing** - Enhanced keyword detection with alias support
+- 🏷️ **Custom Aliases** - Configure cluster aliases (e.g., "production" → "prod")
+- 🔗 **Per-Cluster Contexts** - Isolated conversation history for each cluster
+
+**Better Configuration:**
+- 🔐 **Secrets Separation** - Clear distinction between config and sensitive data
+- 📝 **Structured Config** - New `config.py` module for type-safe configuration
+- 🛡️ **Security First** - Secrets never in .env files, only environment variables
+
+**Developer Experience:**
+- ✅ **Unit Tests** - Comprehensive test coverage for multi-cluster features
+- 📚 **Better Docs** - New [SECRETS.md](SECRETS.md) and [TESTING.md](TESTING.md) guides
+- 🐛 **Improved Errors** - User-friendly error messages with actionable solutions
+
+---
+
 ## Features
 
 ✅ **Natural Language Interface** - Ask questions like "@kagent what pods are running in production?"
 ✅ **Two Deployment Methods** - Single bot per cluster OR one bot for multiple clusters
-✅ **Multi-Cluster Routing** - Detect cluster keywords (test, dev, prod) in messages
+✅ **Multi-Cluster Routing** - Detect cluster keywords (test, dev, prod) in messages with alias support
 ✅ **Conversational Context** - Maintains conversation history within Slack threads
+✅ **Token Management** - Automatic tracking and warnings for conversation size limits
+✅ **Interactive Commands** - `help`, `reset context`, `context info` for better control
 ✅ **A2A Protocol** - Standard Agent2Agent communication with streaming support
 ✅ **Socket Mode** - No public URLs needed, works behind firewalls
 ✅ **Production Ready** - Security hardened with proper error handling
 ✅ **Kubernetes Native** - Full pod security compliance
+✅ **Well Tested** - Comprehensive unit tests for core functionality
 
 ---
 
@@ -351,22 +379,43 @@ curl http://192.168.1.200:8080/api/a2a/kagent/k8s-agent/.well-known/agent.json
 
 ## Documentation
 
+### Getting Started
 - **[QUICKSTART.md](QUICKSTART.md)** - 5-minute setup guide
 - **[KUBERNETES.md](KUBERNETES.md)** - Method 1: Single bot per cluster deployment
 - **[LAPTOP_SERVER_SETUP.md](LAPTOP_SERVER_SETUP.md)** - Method 2: Multi-cluster middleman deployment
 - **[LOCAL_DEV.md](LOCAL_DEV.md)** - Local development guide
-- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and fixes
+
+### Configuration & Security
+- **[SECRETS.md](SECRETS.md)** - Secrets management and best practices
+- **[.env.example](.env.example)** - Configuration template (no secrets!)
+
+### Troubleshooting & Testing
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and fixes (including token limits!)
+- **[TESTING.md](TESTING.md)** - Testing guide and running unit tests
 
 ---
 
 ## Contributing
 
 Contributions are welcome! Areas for contribution:
-- Long-term conversation memory (Redis/database)
+- Long-term conversation memory (Redis/database for context persistence)
 - Slash commands (`/kagent ask ...`)
-- Interactive buttons and forms
-- Metrics and observability (Prometheus/Grafana)
-- Unit and integration tests
+- Interactive buttons and forms (Slack Block Kit)
+- Metrics and observability (Prometheus/Grafana dashboards)
+- Integration tests (mock Slack/Kagent APIs)
+- Performance benchmarks and load testing
+- Additional unit tests (see [TESTING.md](TESTING.md))
+
+### Running Tests
+
+```bash
+python3 -m venv venv-test
+source venv-test/bin/activate
+pip install -r requirements.txt
+python -m unittest test_bot_functions -v
+```
+
+See [TESTING.md](TESTING.md) for detailed testing guide.
 
 ---
 

@@ -4,6 +4,94 @@ Common issues and solutions for both deployment methods.
 
 ---
 
+## Token Limit Errors (NEW in v2.0)
+
+**Error:** `AI Token Limit Exceeded` or `Conversation Context Too Large`
+
+**Symptoms:**
+- Bot responds with "⚠️ AI Token Limit Exceeded"
+- Error mentions "Request too large" or "rate_limit_exceeded"
+- Long conversations suddenly stop working
+
+### What Happened
+
+The conversation has accumulated too much context (message history) that exceeds the AI's token limit.
+
+**OpenAI Limits:**
+- Maximum: ~400,000 tokens per minute
+- Bot Safety Limit: 300,000 tokens (configurable via `MAX_CONTEXT_TOKENS`)
+
+**Token Estimation:**
+- Roughly 4 characters = 1 token
+- A 1000-word message ≈ 1,250 tokens
+- Context includes ALL messages in the thread (questions + answers)
+
+### Solutions
+
+**Option 1: Reset Context (Recommended)**
+```
+@kagent reset context
+```
+This clears the conversation history while staying in the same thread.
+
+**Option 2: Start New Thread**
+Send your next question in a new Slack thread (not as a reply to the existing thread).
+
+**Option 3: Break Up Requests**
+Instead of asking for large outputs, break into focused questions:
+
+❌ **BAD**: `@kagent show me all pods with logs from all namespaces`
+✅ **GOOD**:
+```
+@kagent list namespaces
+@kagent show pods in default namespace
+@kagent logs for pod xyz
+```
+
+### Preventing Token Limit Issues
+
+1. **Check context size:**
+   ```
+   @kagent context info
+   ```
+   Shows current token usage and message count.
+
+2. **Keep questions focused:**
+   - Ask specific questions
+   - Avoid requesting extensive outputs
+   - Don't ask for "all" of something
+
+3. **Start fresh periodically:**
+   - Reset context every 10-15 messages
+   - Or start new threads for new topics
+
+4. **Adjust limit (advanced):**
+   ```bash
+   # In .env or environment
+   MAX_CONTEXT_TOKENS=200000  # Lower limit for safety
+   ```
+
+### Understanding Context Management
+
+**Single-Cluster Mode:**
+- One context per thread
+- Resets affect entire thread
+
+**Multi-Cluster Mode:**
+- Separate context per cluster per thread
+- Reset specific cluster: `@kagent reset context for test`
+- Or reset all: `@kagent reset context`
+
+### Bot Commands for Token Management
+
+```
+@kagent help              - Show all available commands
+@kagent context info      - Show token usage stats
+@kagent reset context     - Clear conversation history
+```
+
+---
+
 ## Bot Not Responding to Mentions
 
 **Symptoms:** Bot doesn't react when mentioned in Slack
