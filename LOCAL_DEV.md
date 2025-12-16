@@ -124,9 +124,15 @@ You should see:
 ### Making Changes
 
 1. Edit `slack_bot.py`
-2. Stop bot (Ctrl+C)
+2. Stop bot (Ctrl+C - graceful shutdown)
 3. Restart bot (`python slack_bot.py`)
 4. Test in Slack
+
+**Note:** When you stop with Ctrl+C, you'll see:
+```
+🛑 Shutting down gracefully...
+   Bot stopped
+```
 
 ### Debugging
 

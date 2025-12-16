@@ -700,4 +700,13 @@ if __name__ == "__main__":
 
     handler = SocketModeHandler(app, config.slack_app_token)
     logger.info("⚡ Bot is running! Waiting for @mentions...")
-    handler.start()
+    logger.info("   Press Ctrl+C to stop")
+
+    try:
+        handler.start()
+    except KeyboardInterrupt:
+        logger.info("\n🛑 Shutting down gracefully...")
+        logger.info("   Bot stopped")
+    except Exception as e:
+        logger.error(f"❌ Unexpected error: {e}", exc_info=True)
+        exit(1)

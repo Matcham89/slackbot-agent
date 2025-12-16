@@ -87,28 +87,40 @@ python slack_bot.py
 
 ---
 
-## Deployment Methods
+## Deployment Options
 
-This bot supports **two deployment methods**. Choose the one that fits your needs:
+### Where to Deploy
 
-### Method 1: Single Bot Per Cluster
+**Option 1: Kubernetes Deployment**
+- Bot runs as a pod inside your cluster
+- Production-ready with proper security standards
+- See [KUBERNETES.md](KUBERNETES.md)
 
-Deploy one bot instance in each cluster. The bot runs inside the cluster and connects directly to the Kagent controller.
+**Option 2: Local Deployment (Laptop/Server)**
+- Bot runs directly via Python on your machine
+- Great for development and testing
+- See [LAPTOP_SERVER_SETUP.md](LAPTOP_SERVER_SETUP.md)
 
-**When to use:**
-- You want isolated, independent bot instances
-- Each cluster has its own dedicated Slack bot
-- Simple setup with direct A2A connection
+### Cluster Configuration
 
-**Architecture:**
-```
-Slack → Bot (in cluster) → Kagent Controller (port 8083) → k8s-agent → Kubernetes API
-```
+**Both deployment options support:**
 
-**Deployment file:** `k8s-deployment-single-cluster.yaml`
-**Documentation:** [KUBERNETES.md](KUBERNETES.md)
+**Single-Cluster Mode:**
+- Connect to ONE Kubernetes cluster
+- Direct A2A connection (port 8083)
+- Simple configuration
 
-**Quick Deploy:**
+**Multi-Cluster Mode (Optional):**
+- Connect to MULTIPLE clusters from one bot
+- Users specify cluster in messages (e.g., "test", "dev", "prod")
+- Requires AgentGateway on each cluster (port 8080)
+
+---
+
+## Quick Deploy Examples
+
+### Kubernetes Deployment (Single-Cluster)
+
 ```bash
 # Create secret with Slack tokens
 kubectl create secret generic slack-credentials \
@@ -120,47 +132,75 @@ kubectl create secret generic slack-credentials \
 kubectl apply -f k8s-deployment-single-cluster.yaml
 ```
 
+**Architecture:**
+```
+Slack → Bot (in cluster) → Kagent Controller :8083 → k8s-agent → Kubernetes API
+```
+
 ---
 
-### Method 2: Multi-Cluster via AgentGateway
+### Local Deployment (Single-Cluster)
 
-Deploy ONE bot on a middleman machine that routes to multiple clusters via AgentGateway.
+```bash
+# Port-forward Kagent
+kubectl port-forward -n kagent svc/kagent-controller 8083:8083 &
 
-**When to use:**
-- You want a single Slack bot for all clusters
-- Users specify cluster keywords (test, dev, prod) in messages
-- Central management from one bot instance
+# Configure
+cp .env.example .env
+# Set: ENABLE_MULTI_CLUSTER=false
+# Set: KAGENT_A2A_URL=http://localhost:8083/api/a2a/kagent/k8s-agent
+
+# Set secrets
+export SLACK_BOT_TOKEN="xoxb-your-token"
+export SLACK_APP_TOKEN="xapp-your-token"
+
+# Run
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python slack_bot.py
+```
 
 **Architecture:**
 ```
-Slack → Bot (on laptop/server) → AgentGateway (port 8080) → Kagent Controller → k8s-agent → Kubernetes API
-                                     ↓
-                            Routes to test, dev, or prod cluster
+Slack → Bot (laptop) → Kagent Controller :8083 → k8s-agent → Kubernetes API
 ```
 
-**Deployment file:** `k8s-deployment-multi-cluster.yaml` OR run on laptop/server
-**Documentation:** [LAPTOP_SERVER_SETUP.md](LAPTOP_SERVER_SETUP.md)
+---
 
-**Quick Deploy:**
+### Local Deployment (Multi-Cluster)
+
 ```bash
-# For Kubernetes deployment
-kubectl create secret generic slack-credentials \
-  --from-literal=bot-token='xoxb-your-bot-token' \
-  --from-literal=app-token='xapp-your-app-token' \
-  --namespace=default
+# Configure
+cp .env.example .env
+# Set: ENABLE_MULTI_CLUSTER=true
+# Set: KAGENT_CLUSTERS=test,dev,prod
+# Set: KAGENT_TEST_BASE_URL=http://192.168.1.200:8080
+# Set: KAGENT_DEV_BASE_URL=http://192.168.1.201:8080
+# Set: KAGENT_PROD_BASE_URL=http://192.168.1.202:8080
 
-kubectl apply -f k8s-deployment-multi-cluster.yaml
+# Set secrets
+export SLACK_BOT_TOKEN="xoxb-your-token"
+export SLACK_APP_TOKEN="xapp-your-token"
 
-# For laptop/server deployment
-# See LAPTOP_SERVER_SETUP.md for systemd service setup
+# Run
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python slack_bot.py
 ```
 
-**How it works:**
-- User: `@kagent list pods in test cluster`
-- Bot detects "test" keyword
-- Routes to: `http://192.168.1.200:8080/api/a2a/kagent/k8s-agent`
-- AgentGateway forwards to test cluster's Kagent controller
-- Response streams back to Slack
+**Architecture:**
+```
+Slack → Bot (laptop) → AgentGateway :8080 → Kagent Controller → k8s-agent
+                            ↓
+                   Routes to test, dev, or prod cluster
+```
+
+**Usage:**
+```
+@kagent list pods in test cluster  → Routes to test
+@kagent check dev namespaces       → Routes to dev
+@kagent show deployments           → Uses default cluster
+```
 
 ---
 
@@ -168,42 +208,58 @@ kubectl apply -f k8s-deployment-multi-cluster.yaml
 
 ### Environment Variables
 
-#### Method 1: Single Bot Per Cluster
-
+**Secrets (MUST be environment variables, NOT in .env):**
 ```bash
-# Slack credentials
-SLACK_BOT_TOKEN=xoxb-your-bot-token
-SLACK_APP_TOKEN=xapp-your-app-token
-
-# Single cluster mode
-ENABLE_MULTI_CLUSTER=false
-
-# Direct A2A connection (port 8083)
-KAGENT_BASE_URL=http://kagent-controller.kagent.svc.cluster.local:8083
-KAGENT_NAMESPACE=kagent
-KAGENT_AGENT_NAME=k8s-agent
+export SLACK_BOT_TOKEN="xoxb-your-bot-token"
+export SLACK_APP_TOKEN="xapp-your-app-token"
 ```
 
-#### Method 2: Multi-Cluster via AgentGateway
+See [SECRETS.md](SECRETS.md) for detailed secrets management guide.
+
+**Single-Cluster Mode:**
 
 ```bash
-# Slack credentials
-SLACK_BOT_TOKEN=xoxb-your-bot-token
-SLACK_APP_TOKEN=xapp-your-app-token
+# Deployment mode
+ENABLE_MULTI_CLUSTER=false
 
-# Multi-cluster mode
+# Option 1: Full URL (recommended)
+KAGENT_A2A_URL=http://localhost:8083/api/a2a/kagent/k8s-agent
+
+# Option 2: Separate components
+# KAGENT_BASE_URL=http://localhost:8083
+# KAGENT_NAMESPACE=kagent
+# KAGENT_AGENT_NAME=k8s-agent
+```
+
+**Multi-Cluster Mode (Optional):**
+
+```bash
+# Deployment mode
 ENABLE_MULTI_CLUSTER=true
+
+# Kagent configuration
 KAGENT_NAMESPACE=kagent
 KAGENT_CLUSTERS=test,dev,prod
 KAGENT_DEFAULT_CLUSTER=test
-
-# Agent name (same across all clusters)
 KAGENT_AGENT_PATTERN=k8s-agent
 
 # AgentGateway endpoints (port 8080)
 KAGENT_TEST_BASE_URL=http://192.168.1.200:8080
 KAGENT_DEV_BASE_URL=http://192.168.1.201:8080
 KAGENT_PROD_BASE_URL=http://192.168.1.202:8080
+
+# Optional: Custom aliases
+KAGENT_TEST_ALIASES=testing,tst,test-cluster
+KAGENT_DEV_ALIASES=development,develop,dev-cluster
+KAGENT_PROD_ALIASES=production,prd,prod-cluster
+```
+
+**Operational Settings (Optional):**
+
+```bash
+REQUEST_TIMEOUT=300         # Request timeout in seconds (default: 300)
+MAX_CONTEXT_TOKENS=300000   # Max tokens before warning (default: 300k)
+LOG_LEVEL=INFO              # Log level: DEBUG, INFO, WARNING, ERROR
 ```
 
 ### Slack App Setup
@@ -227,7 +283,7 @@ KAGENT_PROD_BASE_URL=http://192.168.1.202:8080
 
 ## Architecture
 
-### Method 1: Single Bot Per Cluster
+### Single-Cluster Mode
 
 ```
 ┌─────────────────────┐
@@ -238,7 +294,7 @@ KAGENT_PROD_BASE_URL=http://192.168.1.202:8080
            ↓
 ┌─────────────────────────────┐
 │   Kagent Slack Bot          │
-│   (runs in cluster)         │
+│   (local or in-cluster)     │
 │   - Event Handler           │
 │   - A2A Client              │
 └──────────┬──────────────────┘
@@ -256,7 +312,7 @@ KAGENT_PROD_BASE_URL=http://192.168.1.202:8080
 └───────────────────────────────┘
 ```
 
-### Method 2: Multi-Cluster via AgentGateway
+### Multi-Cluster Mode (Optional)
 
 ```
 ┌─────────────────────┐
@@ -267,7 +323,7 @@ KAGENT_PROD_BASE_URL=http://192.168.1.202:8080
            ↓
 ┌─────────────────────────────┐
 │   Kagent Slack Bot          │
-│   (laptop/server)           │
+│   (local or in-cluster)     │
 │   - Detects "test" keyword  │
 │   - Multi-cluster router    │
 └──────────┬──────────────────┘
@@ -295,21 +351,39 @@ KAGENT_PROD_BASE_URL=http://192.168.1.202:8080
 
 ## Usage
 
-### Basic Interaction
+### Basic Commands
 
 ```
 # Invite the bot to a channel
 /invite @kagent
 
-# Ask questions (Method 1 - single cluster)
+# Get help
+@kagent help
+
+# Context management (v2.0+)
+@kagent context info      # Show token usage
+@kagent reset context     # Clear conversation history
+```
+
+### Single-Cluster Mode
+
+```
 @kagent list all namespaces
 @kagent what pods are running?
 @kagent show me logs for the first pod
+@kagent describe the deployment
+```
 
-# Ask questions (Method 2 - multi-cluster)
+### Multi-Cluster Mode (Optional)
+
+```
+# Specify cluster in message
 @kagent list pods in test cluster
 @kagent check dev namespace status
 @kagent show prod deployments
+
+# Without keyword, uses default cluster
+@kagent list namespaces  ← Routes to default cluster
 ```
 
 ### Thread Context
@@ -394,17 +468,6 @@ curl http://192.168.1.200:8080/api/a2a/kagent/k8s-agent/.well-known/agent.json
 - **[TESTING.md](TESTING.md)** - Testing guide and running unit tests
 
 ---
-
-## Contributing
-
-Contributions are welcome! Areas for contribution:
-- Long-term conversation memory (Redis/database for context persistence)
-- Slash commands (`/kagent ask ...`)
-- Interactive buttons and forms (Slack Block Kit)
-- Metrics and observability (Prometheus/Grafana dashboards)
-- Integration tests (mock Slack/Kagent APIs)
-- Performance benchmarks and load testing
-- Additional unit tests (see [TESTING.md](TESTING.md))
 
 ### Running Tests
 
