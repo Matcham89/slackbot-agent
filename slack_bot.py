@@ -96,15 +96,15 @@ class LocalBrain:
 
         YOUR TASK:
         1. Identify which clusters the user wants to query based on their message.
-        2. Pass the ORIGINAL user question to each cluster (don't modify it).
-        3. The k8s-agent in each cluster will handle the natural language interpretation.
+        2. For COMPARISON queries (e.g., "compare X in dev and test"), extract the data request and send it to each cluster WITHOUT the comparison instruction.
+        3. For SINGLE-CLUSTER queries, pass the original question unchanged.
+        4. The k8s-agent in each cluster will handle the natural language interpretation.
 
         RULES:
-        - If user mentions specific cluster names (e.g., "dev", "test", "prod"), include only those.
-        - If user says "compare X and Y", include both clusters.
-        - If this is a follow-up question (e.g., "yes", "continue", "show more") and previous clusters exist, use those same clusters.
+        - If user asks to "compare X and Y" or "compare X in A and B", extract what they want (X) and create a simple query for each cluster.
+        - If user mentions specific cluster names without comparison (e.g., "how is my dev cluster"), use the original question.
+        - If this is a follow-up question (e.g., "yes", "continue", "show more") and previous clusters exist, use those same clusters with the original message.
         - If no cluster mentioned and no previous context, use the first available cluster.
-        - ALWAYS use the user's original question as the query - don't rewrite it.
 
         EXAMPLE INPUT: "how is my dev cluster"
         EXAMPLE OUTPUT:
@@ -122,12 +122,21 @@ class LocalBrain:
             ]
         }}
 
+        EXAMPLE INPUT: "compare namespaces in dev and test"
+        EXAMPLE OUTPUT:
+        {{
+            "tasks": [
+                {{"cluster": "dev", "query": "what namespaces do you have"}},
+                {{"cluster": "test", "query": "what namespaces do you have"}}
+            ]
+        }}
+
         EXAMPLE INPUT: "compare deployments in test and prod"
         EXAMPLE OUTPUT:
         {{
             "tasks": [
-                {{"cluster": "test", "query": "compare deployments in test and prod"}},
-                {{"cluster": "prod", "query": "compare deployments in test and prod"}}
+                {{"cluster": "test", "query": "what deployments do you have"}},
+                {{"cluster": "prod", "query": "what deployments do you have"}}
             ]
         }}
 
